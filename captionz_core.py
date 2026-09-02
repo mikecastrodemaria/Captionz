@@ -59,6 +59,10 @@ CAPTION_TYPES: dict[str, str] = {
         "Write a {length} product listing style caption for this image.",
     "Social media post":
         "Write a {length} caption for this image as if it were a social media post.",
+    "Dataset paragraph (era, medium, ratio)":
+        "Describe this image in one {length} detailed paragraph: subjects and characters, objects, setting, era if "
+        "identifiable, medium and technique (photo, painting, 3D render, illustration…), visual style and mood. "
+        "Use concrete visual terms. End with the aspect ratio and orientation. Output only the paragraph.",
     "Short sentence":
         "Describe this image in one short sentence.",
 }
