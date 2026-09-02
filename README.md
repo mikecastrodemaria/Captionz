@@ -39,9 +39,9 @@ The scripts create a `.venv` virtual environment and install Pillow.
 
 | Platform | Install | Desktop UI | Web UI |
 |---|---|---|---|
-| Windows (cmd) | `install.bat` | `start.bat` | `start-web.bat` |
-| Windows (PowerShell) | `.\install.ps1` | `.\start.ps1` | `.\start-web.ps1` |
-| Linux / macOS | `./install.sh` | `./start.sh` | `./start-web.sh` |
+| Windows (cmd) | `install.bat` | `start.bat` | `startweb.bat` |
+| Windows (PowerShell) | `.\install.ps1` | `.\start.ps1` | `.\startweb.ps1` |
+| Linux / macOS | `./install.sh` | `./start.sh` | `./startweb.sh` |
 
 If PowerShell refuses to run the script: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
 

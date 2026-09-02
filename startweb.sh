@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Captionz : NiceGUI web UI (Linux / macOS)
+# Captionz : NiceGUI web UI (Linux / macOS). Ctrl+C to stop.
 cd "$(dirname "$0")"
 VPY=.venv/bin/python; [ -x "$VPY" ] || VPY=.venv/Scripts/python.exe
 if [ ! -x "$VPY" ]; then

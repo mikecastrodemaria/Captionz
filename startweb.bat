@@ -5,5 +5,6 @@ if not exist .venv\Scripts\python.exe (
     pause
     exit /b 1
 )
+echo Captionz - interface web NiceGUI (Ctrl+C pour arreter)
 .venv\Scripts\python.exe app.py --ui web %*
 pause
