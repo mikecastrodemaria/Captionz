@@ -1,0 +1,11 @@
+# virtual env
+.venv/
+__pycache__/
+*.pyc
+
+# local state
+settings.json
+test_images/
+bench_results.*
+benchmarks/*.log
+benchmarks/*.log.err

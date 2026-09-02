@@ -1,0 +1,2 @@
+# Aucune dépendance obligatoire (stdlib). Optionnel :
+pillow>=10
