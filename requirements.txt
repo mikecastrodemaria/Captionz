@@ -1,3 +1,5 @@
-# Optional dependencies (the Tkinter UI needs none of them):
+# Optional dependencies (the Tkinter UI and the CLI with Ollama need none of them):
 pillow>=10        # image preview, downscaling before upload, clipboard paste
 nicegui>=3.0      # web UI: python app.py --ui web
+gradio>=5         # Gradio UI / Hugging Face Spaces: python gradio_app.py
+# transformers backend (backend hf): see hf_space/requirements.txt (torch, transformers, accelerate)

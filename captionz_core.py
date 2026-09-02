@@ -224,8 +224,10 @@ class Job:
 
 @dataclass
 class Settings:
+    backend: str = "ollama"         # ollama | hf (transformers, Hugging Face Spaces)
     ollama_url: str = DEFAULT_OLLAMA_URL
     model: str = ""
+    hf_model: str = ""              # transformers model id when backend == "hf"
     caption_type: str = "Training caption (paragraph)"
     caption_length: str = "long"
     options: list = field(default_factory=lambda: list(DEFAULT_OPTIONS))
@@ -306,11 +308,108 @@ def save_pasted_image(img, paste_dir: Path) -> Path:
 
 
 # --------------------------------------------------------------------------- #
-# Background captioning shared by both UIs
+# Backends: where captions come from (Ollama locally, transformers on Spaces)
 # --------------------------------------------------------------------------- #
+class Backend:
+    """Minimal interface every backend implements."""
+    name = "base"
+
+    def list_models(self) -> list[str]:
+        raise NotImplementedError
+
+    def caption(self, model: str, prompt: str, image_path: Path, *, temperature: float = 0.2,
+                max_side: int = 1024) -> str:
+        raise NotImplementedError
+
+
+class OllamaBackend(Backend):
+    name = "ollama"
+
+    def __init__(self, url: str = DEFAULT_OLLAMA_URL, keep_alive: str | int = "10m",
+                 cpu_only: bool = False, blocklist: list[str] | None = None):
+        self.client = OllamaClient(url)
+        self.keep_alive = keep_alive
+        self.cpu_only = cpu_only
+        self.blocklist = blocklist or []
+
+    def list_models(self) -> list[str]:
+        return OllamaClient(self.client.base_url, timeout=15).list_vision_models(self.blocklist)
+
+    def caption(self, model, prompt, image_path, *, temperature=0.2, max_side=1024) -> str:
+        return self.client.caption(model, prompt, image_path, temperature=temperature,
+                                   keep_alive=self.keep_alive, max_side=max_side, cpu_only=self.cpu_only)
+
+
+BACKENDS = ("ollama", "hf")
+
+
+def make_backend(s: "Settings") -> Backend:
+    """Backend chosen by settings: "ollama" (default) or "hf" (transformers,
+    see captionz_hf.py — used on Hugging Face Spaces)."""
+    if s.backend == "hf":
+        from captionz_hf import HFBackend  # lazy: torch/transformers are heavy and optional
+        return HFBackend(s.hf_model or None)
+    return OllamaBackend(s.ollama_url, s.keep_alive, s.cpu_only, s.vision_blocklist)
+
+
+# --------------------------------------------------------------------------- #
+# Captioning logic (UI-independent, used by CLI, Tkinter, NiceGUI, Gradio)
+# --------------------------------------------------------------------------- #
+def caption_job(job: Job, s: "Settings", backend: Backend, force: bool = False) -> Job:
+    """Caption one image and write the text file next to it, honouring the
+    skip / overwrite / append policy, prefix/suffix and single-line options.
+    Updates and returns the job (status: ok | ignoré | erreur)."""
+    out = job.path.with_suffix(s.extension)
+    if out.exists() and s.existing == "skip" and not force:
+        job.status, job.error = "ignoré", "caption déjà présente"
+        return job
+    job.status = "en cours"
+    t0 = time.time()
+    try:
+        text = backend.caption(s.model, s.prompt, job.path, temperature=s.temperature, max_side=s.max_side)
+        if s.single_line:
+            text = " ".join(text.split())
+        text = f"{s.prefix}{text}{s.suffix}".strip()
+        if not text:
+            raise RuntimeError("réponse vide du modèle")
+        if out.exists() and s.existing == "append" and not force:
+            old = out.read_text("utf-8").rstrip("\n")
+            text = (old + "\n" + text) if old else text
+        out.write_text(text + "\n", encoding="utf-8")
+        job.caption, job.status, job.error = text, "ok", ""
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", "replace")[:300]
+        job.status, job.error = "erreur", f"HTTP {e.code}: {body}"
+    except Exception as e:  # noqa: BLE001
+        job.status, job.error = "erreur", str(e)
+    job.duration = time.time() - t0
+    return job
+
+
+def run_jobs(jobs: list[Job], indices: list[int] | None, s: "Settings", force: bool = False,
+             stop_event: threading.Event | None = None, backend: Backend | None = None):
+    """Generator over a batch. Yields ("row", idx) when a job starts and when it
+    ends, then ("progress", done, total). Stops early when stop_event is set."""
+    backend = backend or make_backend(s)
+    if indices is None:
+        indices = list(range(len(jobs)))
+    total = len(indices)
+    for n, idx in enumerate(indices, 1):
+        if stop_event is not None and stop_event.is_set():
+            break
+        job = jobs[idx]
+        out = job.path.with_suffix(s.extension)
+        if not (out.exists() and s.existing == "skip" and not force):
+            job.status = "en cours"
+            yield ("row", idx)
+        caption_job(job, s, backend, force)
+        yield ("row", idx)
+        yield ("progress", n, total)
+
+
 class Captioner:
-    """Runs jobs in a thread. Events are pushed to `events` as tuples:
-    ("row", idx) after a job changes, ("progress", done, total), ("done",)."""
+    """Runs run_jobs() in a thread for the GUIs. Events are pushed to `events`
+    as tuples: ("row", idx), ("progress", done, total), ("done",)."""
 
     def __init__(self) -> None:
         self.events: "queue.Queue[tuple]" = queue.Queue()
@@ -320,7 +419,7 @@ class Captioner:
     def is_running(self) -> bool:
         return self.worker is not None and self.worker.is_alive()
 
-    def start(self, jobs: list[Job], indices: list[int], s: Settings, force: bool = False) -> None:
+    def start(self, jobs: list[Job], indices: list[int], s: "Settings", force: bool = False) -> None:
         if self.is_running():
             return
         self.stop_event.clear()
@@ -330,41 +429,13 @@ class Captioner:
     def stop(self) -> None:
         self.stop_event.set()
 
-    def _run(self, jobs: list[Job], indices: list[int], s: Settings, force: bool) -> None:
-        client = OllamaClient(s.ollama_url)
-        prompt = s.prompt
-        for n, idx in enumerate(indices, 1):
-            if self.stop_event.is_set():
-                break
-            job = jobs[idx]
-            out = job.path.with_suffix(s.extension)
-            if out.exists() and s.existing == "skip" and not force:
-                job.status, job.error = "ignoré", "caption déjà présente"
-                self.events.put(("row", idx))
-                self.events.put(("progress", n, len(indices)))
-                continue
-            job.status = "en cours"
-            self.events.put(("row", idx))
-            t0 = time.time()
-            try:
-                text = client.caption(s.model, prompt, job.path, temperature=s.temperature,
-                                      keep_alive=s.keep_alive, max_side=s.max_side, cpu_only=s.cpu_only)
-                if s.single_line:
-                    text = " ".join(text.split())
-                text = f"{s.prefix}{text}{s.suffix}".strip()
-                if not text:
-                    raise RuntimeError("réponse vide du modèle")
-                if out.exists() and s.existing == "append" and not force:
-                    old = out.read_text("utf-8").rstrip("\n")
-                    text = (old + "\n" + text) if old else text
-                out.write_text(text + "\n", encoding="utf-8")
-                job.caption, job.status, job.error = text, "ok", ""
-            except urllib.error.HTTPError as e:
-                body = e.read().decode("utf-8", "replace")[:300]
-                job.status, job.error = "erreur", f"HTTP {e.code}: {body}"
-            except Exception as e:  # noqa: BLE001
-                job.status, job.error = "erreur", str(e)
-            job.duration = time.time() - t0
-            self.events.put(("row", idx))
-            self.events.put(("progress", n, len(indices)))
+    def _run(self, jobs: list[Job], indices: list[int], s: "Settings", force: bool) -> None:
+        try:
+            for ev in run_jobs(jobs, indices, s, force, self.stop_event):
+                self.events.put(ev)
+        except Exception as e:  # noqa: BLE001  (e.g. backend import failure)
+            for idx in indices:
+                if jobs[idx].status in ("en attente", "en cours"):
+                    jobs[idx].status, jobs[idx].error = "erreur", str(e)
+                    self.events.put(("row", idx))
         self.events.put(("done",))
