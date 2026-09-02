@@ -62,6 +62,7 @@ def collect_settings() -> Settings:
         existing=W["existing"].value,
         temperature=float(W["temp"].value or 0),
         max_tokens=int(W["maxtok"].value or 0),
+        no_think=W["nothink"].value,
         single_line=W["single"].value,
         keep_alive=str(W["keep"].value or "0"),
         max_side=int(W["maxside"].value or 0),
@@ -456,6 +457,8 @@ def build() -> None:
                     W["cpu"] = ui.checkbox("Forcer CPU", value=s.cpu_only)
                     W["maxtok"] = ui.number("Tokens max (0 = illimité)", value=s.max_tokens, min=0, max=8192, step=256) \
                         .classes("w-44").tooltip("Borne la génération : un modèle qui divague est coupé au lieu de bloquer")
+                    W["nothink"] = ui.checkbox("Désactiver le thinking", value=s.no_think) \
+                        .tooltip("Modèles thinking (Qwen3, DeepSeek-R1…) : envoie think=false, le raisonnement ne fait que brûler des tokens")
                     if Image is None:
                         W["maxside"].disable()
                         ui.label("(pip install pillow)").classes("text-sm opacity-70")

@@ -224,6 +224,7 @@ class App(tk.Tk):
         mf.pack(fill="x", **pad)
         self.var_temp = tk.DoubleVar(value=s.temperature)
         self.var_maxtok = tk.IntVar(value=s.max_tokens)
+        self.var_nothink = tk.BooleanVar(value=s.no_think)
         self.var_keep = tk.StringVar(value=str(s.keep_alive))
         self.var_maxside = tk.IntVar(value=s.max_side)
         self.var_cpu = tk.BooleanVar(value=s.cpu_only)
@@ -241,7 +242,8 @@ class App(tk.Tk):
         ttk.Label(mf, text="Tokens max (0 = illimité) :").grid(row=1, column=0, sticky="w", **pad)
         ttk.Spinbox(mf, from_=0, to=8192, increment=256, textvariable=self.var_maxtok, width=6).grid(row=1, column=1, **pad)
         ttk.Label(mf, text="borne la génération : un modèle qui divague est coupé au lieu de bloquer").grid(
-            row=1, column=2, columnspan=6, sticky="w", **pad)
+            row=1, column=2, columnspan=5, sticky="w", **pad)
+        ttk.Checkbutton(mf, text="Désactiver le thinking", variable=self.var_nothink).grid(row=1, column=7, sticky="w", **pad)
 
         # --- controls ---
         ctl = ttk.Frame(left)
@@ -387,6 +389,7 @@ class App(tk.Tk):
             existing=self.var_existing.get(),
             temperature=float(self.var_temp.get()),
             max_tokens=int(self.var_maxtok.get() or 0),
+            no_think=self.var_nothink.get(),
             single_line=self.var_single.get(),
             keep_alive=self.var_keep.get().strip() or "0",
             max_side=int(self.var_maxside.get() or 0),

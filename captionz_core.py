@@ -223,10 +223,11 @@ class OllamaClient:
 
     def caption(self, model: str, prompt: str, image_path: Path, temperature: float = 0.2,
                 keep_alive: str | int = "10m", max_side: int = 1024, cpu_only: bool = False,
-                max_tokens: int = 1024) -> str:
+                max_tokens: int = 1024, no_think: bool = True) -> str:
         """One caption. Generation is capped by `max_tokens` (num_predict) so a
-        model that rambles cannot run away; thinking is disabled on models that
-        declare the capability (the reasoning would only burn tokens)."""
+        model that rambles cannot run away. With `no_think` (default) thinking is
+        disabled on models that declare the capability: the reasoning would only
+        burn tokens and time, the caption is what matters."""
         options: dict = {"temperature": temperature}
         if max_tokens and max_tokens > 0:
             options["num_predict"] = int(max_tokens)
@@ -238,7 +239,7 @@ class OllamaClient:
                           "images": [self.encode_image(image_path, max_side)]}],
         }
         if "thinking" in self.capabilities(model):
-            payload["think"] = False
+            payload["think"] = not no_think
         resp = self._request("POST", "/api/chat", payload)
         text = self.strip_thinking((resp.get("message") or {}).get("content", ""))
         if resp.get("done_reason") == "length" and not text:
@@ -278,6 +279,7 @@ class Settings:
     existing: str = "skip"          # skip | overwrite | append
     temperature: float = 0.2
     max_tokens: int = 1024          # num_predict cap (0 = no cap)
+    no_think: bool = True           # disable thinking on models that support it
     single_line: bool = True
     keep_alive: str = "10m"
     max_side: int = 1024
@@ -372,12 +374,14 @@ class OllamaBackend(Backend):
     name = "ollama"
 
     def __init__(self, url: str = DEFAULT_OLLAMA_URL, keep_alive: str | int = "10m",
-                 cpu_only: bool = False, blocklist: list[str] | None = None, max_tokens: int = 1024):
+                 cpu_only: bool = False, blocklist: list[str] | None = None, max_tokens: int = 1024,
+                 no_think: bool = True):
         self.client = OllamaClient(url)
         self.keep_alive = keep_alive
         self.cpu_only = cpu_only
         self.blocklist = blocklist or []
         self.max_tokens = max_tokens
+        self.no_think = no_think
 
     def list_models(self) -> list[str]:
         return OllamaClient(self.client.base_url, timeout=15).list_vision_models(self.blocklist)
@@ -391,7 +395,7 @@ class OllamaBackend(Backend):
     def caption(self, model, prompt, image_path, *, temperature=0.2, max_side=1024) -> str:
         return self.client.caption(model, prompt, image_path, temperature=temperature,
                                    keep_alive=self.keep_alive, max_side=max_side, cpu_only=self.cpu_only,
-                                   max_tokens=self.max_tokens)
+                                   max_tokens=self.max_tokens, no_think=self.no_think)
 
 
 BACKENDS = ("ollama", "hf")
@@ -403,7 +407,7 @@ def make_backend(s: "Settings") -> Backend:
     if s.backend == "hf":
         from captionz_hf import HFBackend  # lazy: torch/transformers are heavy and optional
         return HFBackend(s.hf_model or None, max_new_tokens=s.max_tokens or 512)
-    return OllamaBackend(s.ollama_url, s.keep_alive, s.cpu_only, s.vision_blocklist, s.max_tokens)
+    return OllamaBackend(s.ollama_url, s.keep_alive, s.cpu_only, s.vision_blocklist, s.max_tokens, s.no_think)
 
 
 # --------------------------------------------------------------------------- #
