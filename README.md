@@ -16,7 +16,8 @@ The Ollama layer reuses proven patterns from crispz-studio (`cz_ollama.py`): vis
 - Existing captions: skip, overwrite, or append
 - Caption everything, only the selection, or the displayed image
 - Prefix / suffix (trigger word), output extension, single-line output
-- `keep_alive` (0 = unload the model after each image), max image side in px, CPU mode
+- `keep_alive` (0 = unload the model after each image), max image side in px, CPU mode, **max tokens** cap (a rambling model is cut instead of hanging; thinking is disabled on models that declare it)
+- **Live status line**: model loading phase (detected through `/api/ps`), current image, elapsed time, overall percentage and estimated remaining time
 - Model blocklist through `settings.json` (`vision_blocklist`)
 - **Dark mode**, background processing, progress bar, log, clean stop
 - Settings are remembered in `settings.json`

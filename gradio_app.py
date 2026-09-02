@@ -25,8 +25,8 @@ from pathlib import Path
 import gradio as gr
 
 from captionz_core import (
-    BACKENDS, CAPTION_LENGTHS, CAPTION_TYPES, DEFAULT_OLLAMA_URL, EXTRA_OPTIONS, IMAGE_EXTS, Job, Settings,
-    build_prompt, caption_job, make_backend, save_pasted_image,
+    BACKENDS, CAPTION_LENGTHS, CAPTION_TYPES, DEFAULT_OLLAMA_URL, EXTRA_OPTIONS, IMAGE_EXTS, BatchProgress, Job,
+    Settings, build_prompt, make_backend, run_jobs, save_pasted_image,
 )
 
 ON_SPACES = bool(os.environ.get("SPACE_ID"))
@@ -39,19 +39,19 @@ _backend_cache: dict[str, object] = {}
 # Glue (thin): settings from widgets, backend cache, file handling
 # --------------------------------------------------------------------------- #
 def settings_from_ui(backend, url, model, hf_model, ctype, length, options, name, custom,
-                     prefix, suffix, single, temperature, max_side) -> Settings:
+                     prefix, suffix, single, temperature, max_side, max_tokens=1024) -> Settings:
     s = Settings.load()
     s.backend, s.ollama_url, s.model, s.hf_model = backend, url or DEFAULT_OLLAMA_URL, model or "", hf_model or ""
     s.caption_type, s.caption_length, s.options = ctype, length, list(options or [])
     s.name, s.custom_prompt = name or "", custom or ""
     s.prefix, s.suffix, s.single_line = prefix or "", suffix or "", bool(single)
-    s.temperature, s.max_side = float(temperature), int(max_side)
+    s.temperature, s.max_side, s.max_tokens = float(temperature), int(max_side), int(max_tokens or 0)
     s.existing, s.extension = "overwrite", ".txt"   # Spaces: temp copies, always overwrite
     return s.normalized()
 
 
 def get_backend(s: Settings):
-    key = f"{s.backend}|{s.ollama_url}|{s.hf_model}"
+    key = f"{s.backend}|{s.ollama_url}|{s.hf_model}|{s.max_tokens}"
     if key not in _backend_cache:
         _backend_cache.clear()
         _backend_cache[key] = make_backend(s)
@@ -132,13 +132,13 @@ def make_zip(items) -> str | None:
 
 
 def run_all(items, backend, url, model, hf_model, ctype, length, options, name, custom,
-            prefix, suffix, single, temperature, max_side, progress=gr.Progress()):
+            prefix, suffix, single, temperature, max_side, max_tokens, progress=gr.Progress()):
     items = list(items or [])
     if not items:
         yield items, *render(items), None, "Ajoute d'abord des images."
         return
     s = settings_from_ui(backend, url, model, hf_model, ctype, length, options, name, custom,
-                         prefix, suffix, single, temperature, max_side)
+                         prefix, suffix, single, temperature, max_side, max_tokens)
     try:
         be = get_backend(s)
         if s.backend == "ollama" and not s.model:
@@ -147,17 +147,23 @@ def run_all(items, backend, url, model, hf_model, ctype, length, options, name, 
         yield items, *render(items), None, f"Backend indisponible : {e}"
         return
     log = [f"Démarrage : {len(items)} image(s), backend {s.backend}, modèle {s.model or s.hf_model or 'défaut'}"]
-    for i, it in enumerate(progress.tqdm(items, desc="captioning")):
-        job = Job(Path(it["path"]))
-        it["status"] = "en cours"
-        yield items, *render(items), None, "\n".join(log)
-        caption_job(job, s, be, force=True)
-        it.update(status=job.status, caption=job.caption, seconds=job.duration)
-        log.append(f"{'✔' if job.status == 'ok' else '✖'} {job.path.name} ({job.duration:.1f}s) "
-                   f"{job.error or job.caption[:80]}")
-        yield items, *render(items), None, "\n".join(log)
+    jobs = [Job(Path(it["path"])) for it in items]
+    prog = BatchProgress()
+    for ev in run_jobs(jobs, None, s, force=True, backend=be, progress=prog):
+        idx = ev[1]
+        job, it = jobs[idx], items[idx]
+        snap = prog.snapshot()
+        progress(snap["fraction"], desc=snap["text"])
+        if ev[0] == "phase" and ev[2] == "chargement":
+            log.append(f"Chargement du modèle « {prog.model} »…")
+        if ev[0] == "row":
+            it.update(status=job.status, caption=job.caption, seconds=job.duration)
+            if job.status in ("ok", "erreur"):
+                log.append(f"{'✔' if job.status == 'ok' else '✖'} {job.path.name} ({job.duration:.1f}s) "
+                           f"{job.error or job.caption[:80]}")
+        yield items, *render(items), None, "\n".join(log + [snap["text"]])
     ok = sum(it["status"] == "ok" for it in items)
-    log.append(f"Terminé : {ok}/{len(items)} ok")
+    log.append(f"Terminé : {ok}/{len(items)} ok · {prog.snapshot()['text']}")
     yield items, *render(items), make_zip(items), "\n".join(log)
 
 
@@ -238,6 +244,7 @@ def build(default_backend: str = DEFAULT_BACKEND) -> gr.Blocks:
                     with gr.Row():
                         temperature = gr.Slider(0, 1.5, value=s0.temperature, step=0.1, label="Température")
                         max_side = gr.Number(value=s0.max_side, precision=0, label="Côté max px (0 = brut)")
+                        max_tokens = gr.Number(value=s0.max_tokens, precision=0, label="Tokens max (0 = illimité)")
 
                 run = gr.Button("▶ Captionner tout", variant="primary")
                 log = gr.Textbox(lines=6, label="Journal", interactive=False)
@@ -269,7 +276,7 @@ def build(default_backend: str = DEFAULT_BACKEND) -> gr.Blocks:
         gallery.select(on_select, items, [sel_idx, caption_box])
         save.click(save_caption, [items, sel_idx, caption_box], [items, gallery, table, zip_out, log])
         run.click(run_all, [items, backend, url, model, hf_model, ctype, length, options, name, custom,
-                            prefix, suffix, single, temperature, max_side],
+                            prefix, suffix, single, temperature, max_side, max_tokens],
                   [items, gallery, table, zip_out, log])
     return demo
 

@@ -223,6 +223,7 @@ class App(tk.Tk):
         mf = ttk.LabelFrame(left, text="Modèle")
         mf.pack(fill="x", **pad)
         self.var_temp = tk.DoubleVar(value=s.temperature)
+        self.var_maxtok = tk.IntVar(value=s.max_tokens)
         self.var_keep = tk.StringVar(value=str(s.keep_alive))
         self.var_maxside = tk.IntVar(value=s.max_side)
         self.var_cpu = tk.BooleanVar(value=s.cpu_only)
@@ -237,6 +238,10 @@ class App(tk.Tk):
             sb.configure(state="disabled")
             ttk.Label(mf, text="(pip install pillow)").grid(row=0, column=6, sticky="w")
         ttk.Checkbutton(mf, text="Forcer CPU", variable=self.var_cpu).grid(row=0, column=7, sticky="w", **pad)
+        ttk.Label(mf, text="Tokens max (0 = illimité) :").grid(row=1, column=0, sticky="w", **pad)
+        ttk.Spinbox(mf, from_=0, to=8192, increment=256, textvariable=self.var_maxtok, width=6).grid(row=1, column=1, **pad)
+        ttk.Label(mf, text="borne la génération : un modèle qui divague est coupé au lieu de bloquer").grid(
+            row=1, column=2, columnspan=6, sticky="w", **pad)
 
         # --- controls ---
         ctl = ttk.Frame(left)
@@ -248,10 +253,12 @@ class App(tk.Tk):
         self.btn_stop = ttk.Button(ctl, text="■ Arrêter", command=self.stop, state="disabled")
         self.btn_stop.pack(side="left", **pad)
         ttk.Button(ctl, text="🌓 Mode sombre", command=self.toggle_theme).pack(side="right", **pad)
-        self.progress = ttk.Progressbar(ctl, mode="determinate")
+        self.progress = ttk.Progressbar(ctl, mode="determinate", maximum=1000)
         self.progress.pack(side="left", fill="x", expand=True, **pad)
         self.lbl_progress = ttk.Label(ctl, text="")
         self.lbl_progress.pack(side="left", **pad)
+        self.lbl_status = ttk.Label(left, text="", anchor="w")
+        self.lbl_status.pack(fill="x", padx=12, pady=(0, 2))
 
         self.log = scrolledtext.ScrolledText(left, height=5, state="disabled", wrap="word")
         self.log.pack(fill="x", padx=6, pady=(0, 6))
@@ -379,6 +386,7 @@ class App(tk.Tk):
             recursive=self.var_recursive.get(),
             existing=self.var_existing.get(),
             temperature=float(self.var_temp.get()),
+            max_tokens=int(self.var_maxtok.get() or 0),
             single_line=self.var_single.get(),
             keep_alive=self.var_keep.get().strip() or "0",
             max_side=int(self.var_maxside.get() or 0),
@@ -636,8 +644,9 @@ class App(tk.Tk):
         for b in (self.btn_start, self.btn_sel):
             b.configure(state="disabled")
         self.btn_stop.configure(state="normal")
-        self.progress.configure(maximum=len(indices), value=0)
-        self.lbl_progress.configure(text=f"0/{len(indices)}")
+        self.progress.configure(value=0)
+        self.lbl_progress.configure(text="0%")
+        self.lbl_status.configure(text="démarrage…")
         self._log(f"Démarrage : {len(indices)} image(s) avec « {s.model} »"
                   f"{'' if Image else ' (Pillow absent : images envoyées brutes)'}.")
         self.captioner.start(self.jobs, indices, s, force)
@@ -670,14 +679,18 @@ class App(tk.Tk):
                         self.txt_caption.insert("1.0", job.caption)
                         self.lbl_caption_file.configure(
                             text=job.path.with_suffix(self.settings.extension).name + " (existe)")
-                elif ev[0] == "progress":
-                    self.progress.configure(value=ev[1])
-                    self.lbl_progress.configure(text=f"{ev[1]}/{ev[2]}")
+                elif ev[0] == "phase":
+                    if ev[2] == "chargement":
+                        self._log(f"Chargement du modèle « {self.settings.model} »…")
                 elif ev[0] == "done":
                     self._on_done()
         except queue.Empty:
             pass
-        if self.captioner.is_running():  # live elapsed time on the running row(s)
+        if self.captioner.is_running():  # live status: phase, timer, %, ETA
+            snap = self.captioner.progress.snapshot()
+            self.progress.configure(value=int(snap["fraction"] * 1000))
+            self.lbl_progress.configure(text=f"{snap['fraction'] * 100:.0f}%")
+            self.lbl_status.configure(text=snap["text"])
             for i, j in enumerate(self.jobs):
                 if j.status == "en cours":
                     self._refresh_row(i)
@@ -688,7 +701,11 @@ class App(tk.Tk):
         err = sum(j.status == "erreur" for j in self.jobs)
         skip = sum(j.status == "ignoré" for j in self.jobs)
         stopped = self.captioner.stop_event.is_set()
-        self._log(f"{'Arrêté' if stopped else 'Terminé'} : {ok} ok, {skip} ignoré(s), {err} erreur(s).")
+        snap = self.captioner.progress.snapshot()
+        self.progress.configure(value=int(snap["fraction"] * 1000))
+        self.lbl_progress.configure(text=f"{snap['fraction'] * 100:.0f}%")
+        self.lbl_status.configure(text=snap["text"])
+        self._log(f"{'Arrêté' if stopped else 'Terminé'} : {ok} ok, {skip} ignoré(s), {err} erreur(s) · {snap['text']}")
         for b in (self.btn_start, self.btn_sel):
             b.configure(state="normal")
         self.btn_stop.configure(state="disabled")

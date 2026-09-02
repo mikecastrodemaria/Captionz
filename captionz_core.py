@@ -126,6 +126,16 @@ class OllamaClient:
     def __init__(self, base_url: str, timeout: int = 600):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self._caps: dict[str, list[str]] = {}
+
+    def capabilities(self, model: str) -> list[str]:
+        """Capabilities reported by /api/show (cached): completion, vision, thinking, tools…"""
+        if model not in self._caps:
+            try:
+                self._caps[model] = [c.lower() for c in self.show(model).get("capabilities") or []]
+            except Exception:
+                self._caps[model] = []
+        return self._caps[model]
 
     def _request(self, method: str, path: str, payload: dict | None = None) -> dict:
         data = json.dumps(payload).encode("utf-8") if payload is not None else None
@@ -139,6 +149,21 @@ class OllamaClient:
 
     def show(self, name: str) -> dict:
         return self._request("POST", "/api/show", {"model": name})
+
+    def loaded_models(self) -> list[str]:
+        """Models currently in memory (GET /api/ps)."""
+        try:
+            return [m.get("name") or m.get("model") for m in self._request("GET", "/api/ps").get("models", [])]
+        except Exception:
+            return []
+
+    def load_model(self, model: str, keep_alive: str | int = "10m", cpu_only: bool = False) -> None:
+        """Load a model without generating (empty prompt), so loading can be
+        timed and reported separately from generation."""
+        payload: dict = {"model": model, "keep_alive": keep_alive}
+        if cpu_only:
+            payload["options"] = {"num_gpu": 0}
+        self._request("POST", "/api/generate", payload)
 
     def list_vision_models(self, blocklist: list[str] | None = None) -> list[str]:
         """Models that can really do vision (crispz-studio pattern).
@@ -197,8 +222,14 @@ class OllamaClient:
         return _THINK_RE.sub("", text).strip().strip('"')
 
     def caption(self, model: str, prompt: str, image_path: Path, temperature: float = 0.2,
-                keep_alive: str | int = "10m", max_side: int = 1024, cpu_only: bool = False) -> str:
+                keep_alive: str | int = "10m", max_side: int = 1024, cpu_only: bool = False,
+                max_tokens: int = 1024) -> str:
+        """One caption. Generation is capped by `max_tokens` (num_predict) so a
+        model that rambles cannot run away; thinking is disabled on models that
+        declare the capability (the reasoning would only burn tokens)."""
         options: dict = {"temperature": temperature}
+        if max_tokens and max_tokens > 0:
+            options["num_predict"] = int(max_tokens)
         if cpu_only:
             options["num_gpu"] = 0  # no shared VRAM (slower)
         payload = {
@@ -206,8 +237,14 @@ class OllamaClient:
             "messages": [{"role": "user", "content": prompt,
                           "images": [self.encode_image(image_path, max_side)]}],
         }
+        if "thinking" in self.capabilities(model):
+            payload["think"] = False
         resp = self._request("POST", "/api/chat", payload)
-        return self.strip_thinking((resp.get("message") or {}).get("content", ""))
+        text = self.strip_thinking((resp.get("message") or {}).get("content", ""))
+        if resp.get("done_reason") == "length" and not text:
+            raise RuntimeError(f"limite de {max_tokens} tokens atteinte sans caption (le modèle divague) ; "
+                               f"augmente « tokens max » ou change de modèle")
+        return text
 
 
 # --------------------------------------------------------------------------- #
@@ -240,6 +277,7 @@ class Settings:
     recursive: bool = True
     existing: str = "skip"          # skip | overwrite | append
     temperature: float = 0.2
+    max_tokens: int = 1024          # num_predict cap (0 = no cap)
     single_line: bool = True
     keep_alive: str = "10m"
     max_side: int = 1024
@@ -318,6 +356,13 @@ class Backend:
     def list_models(self) -> list[str]:
         raise NotImplementedError
 
+    def is_loaded(self, model: str) -> bool:
+        """True when the model is already in memory (no loading phase expected)."""
+        return True
+
+    def load(self, model: str) -> None:
+        """Load the model explicitly (optional; called when is_loaded() is False)."""
+
     def caption(self, model: str, prompt: str, image_path: Path, *, temperature: float = 0.2,
                 max_side: int = 1024) -> str:
         raise NotImplementedError
@@ -327,18 +372,26 @@ class OllamaBackend(Backend):
     name = "ollama"
 
     def __init__(self, url: str = DEFAULT_OLLAMA_URL, keep_alive: str | int = "10m",
-                 cpu_only: bool = False, blocklist: list[str] | None = None):
+                 cpu_only: bool = False, blocklist: list[str] | None = None, max_tokens: int = 1024):
         self.client = OllamaClient(url)
         self.keep_alive = keep_alive
         self.cpu_only = cpu_only
         self.blocklist = blocklist or []
+        self.max_tokens = max_tokens
 
     def list_models(self) -> list[str]:
         return OllamaClient(self.client.base_url, timeout=15).list_vision_models(self.blocklist)
 
+    def is_loaded(self, model: str) -> bool:
+        return model in self.client.loaded_models()
+
+    def load(self, model: str) -> None:
+        self.client.load_model(model, self.keep_alive, self.cpu_only)
+
     def caption(self, model, prompt, image_path, *, temperature=0.2, max_side=1024) -> str:
         return self.client.caption(model, prompt, image_path, temperature=temperature,
-                                   keep_alive=self.keep_alive, max_side=max_side, cpu_only=self.cpu_only)
+                                   keep_alive=self.keep_alive, max_side=max_side, cpu_only=self.cpu_only,
+                                   max_tokens=self.max_tokens)
 
 
 BACKENDS = ("ollama", "hf")
@@ -349,8 +402,8 @@ def make_backend(s: "Settings") -> Backend:
     see captionz_hf.py — used on Hugging Face Spaces)."""
     if s.backend == "hf":
         from captionz_hf import HFBackend  # lazy: torch/transformers are heavy and optional
-        return HFBackend(s.hf_model or None)
-    return OllamaBackend(s.ollama_url, s.keep_alive, s.cpu_only, s.vision_blocklist)
+        return HFBackend(s.hf_model or None, max_new_tokens=s.max_tokens or 512)
+    return OllamaBackend(s.ollama_url, s.keep_alive, s.cpu_only, s.vision_blocklist, s.max_tokens)
 
 
 # --------------------------------------------------------------------------- #
@@ -387,25 +440,109 @@ def caption_job(job: Job, s: "Settings", backend: Backend, force: bool = False) 
     return job
 
 
+def _fmt_secs(x: float) -> str:
+    x = max(int(round(x)), 0)
+    return f"{x // 60} min {x % 60:02d} s" if x >= 60 else f"{x} s"
+
+
+class BatchProgress:
+    """Live state of a batch for the UIs: phase, current image, elapsed time,
+    overall percentage (done images + estimated fraction of the current one),
+    estimated remaining time. Read `snapshot()` from any thread."""
+
+    def __init__(self) -> None:
+        self.reset(0)
+
+    def reset(self, total: int, model: str = "") -> None:
+        self.total, self.done, self.model = total, 0, model
+        self.phase, self.current = "", ""
+        self.phase_started = self.batch_started = time.time() if total else 0.0
+        self.durations: list[float] = []
+        self.load_seconds = 0.0
+        self.finished = False
+        self.stopped = False
+
+    def set_phase(self, phase: str, current: str = "") -> None:
+        self.phase, self.current, self.phase_started = phase, current, time.time()
+
+    def snapshot(self) -> dict:
+        if not self.total:
+            return {"text": "", "fraction": 0.0, "elapsed": 0.0}
+        now = time.time()
+        elapsed = now - self.phase_started if self.phase_started else 0.0
+        avg = sum(self.durations) / len(self.durations) if self.durations else None
+        sub = min(elapsed / avg, 0.95) if (avg and self.phase == "génération") else 0.0
+        fraction = min((self.done + sub) / self.total, 1.0)
+        if self.finished:
+            total_s = now - self.batch_started
+            label = "Arrêté" if self.stopped else "Terminé"
+            text = f"{label} · {self.done}/{self.total} · {_fmt_secs(total_s)} au total"
+            if self.load_seconds:
+                text += f" (dont chargement {_fmt_secs(self.load_seconds)})"
+            return {"text": text, "fraction": fraction if self.stopped else 1.0, "elapsed": total_s}
+        parts = [f"{self.done}/{self.total} · {fraction * 100:.0f}%"]
+        if self.phase == "chargement":
+            parts.append(f"chargement du modèle {self.model} · {_fmt_secs(elapsed)}")
+        elif self.phase:
+            parts.append(f"{self.phase} · {self.current} · {_fmt_secs(elapsed)}")
+        if avg and self.phase == "génération":
+            remaining = max(avg * (self.total - self.done) - elapsed, 0.0)
+            parts.append(f"reste ~{_fmt_secs(remaining)}")
+        return {"text": " · ".join(parts), "fraction": fraction, "elapsed": elapsed}
+
+
 def run_jobs(jobs: list[Job], indices: list[int] | None, s: "Settings", force: bool = False,
-             stop_event: threading.Event | None = None, backend: Backend | None = None):
-    """Generator over a batch. Yields ("row", idx) when a job starts and when it
-    ends, then ("progress", done, total). Stops early when stop_event is set."""
+             stop_event: threading.Event | None = None, backend: Backend | None = None,
+             progress: BatchProgress | None = None):
+    """Generator over a batch. Yields ("phase", idx, name) on phase changes
+    ("chargement" of the model, "génération"), ("row", idx) when a job starts
+    and when it ends, then ("progress", done, total). Stops early when
+    stop_event is set. `progress` (BatchProgress) is kept up to date."""
     backend = backend or make_backend(s)
     if indices is None:
         indices = list(range(len(jobs)))
     total = len(indices)
+    model = s.model if s.backend == "ollama" else (s.hf_model or "default")
+    prog = progress or BatchProgress()
+    prog.reset(total, model)
     for n, idx in enumerate(indices, 1):
         if stop_event is not None and stop_event.is_set():
+            prog.stopped = True
             break
         job = jobs[idx]
         out = job.path.with_suffix(s.extension)
-        if not (out.exists() and s.existing == "skip" and not force):
-            job.status, job.duration, job.started = "en cours", 0.0, time.time()
+        if out.exists() and s.existing == "skip" and not force:
+            caption_job(job, s, backend, force)
+            prog.done = n
             yield ("row", idx)
+            yield ("progress", n, total)
+            continue
+        job.status, job.duration, job.started = "en cours", 0.0, time.time()
+        yield ("row", idx)
+        try:
+            needs_load = not backend.is_loaded(s.model)
+        except Exception:
+            needs_load = False
+        if needs_load:
+            prog.set_phase("chargement", job.path.name)
+            yield ("phase", idx, "chargement")
+            t0 = time.time()
+            try:
+                backend.load(s.model)
+            except Exception:
+                pass  # the caption call will surface the real error
+            prog.load_seconds += time.time() - t0
+            job.started = time.time()
+        prog.set_phase("génération", job.path.name)
+        yield ("phase", idx, "génération")
         caption_job(job, s, backend, force)
+        if job.status == "ok":
+            prog.durations.append(job.duration)
+        prog.done = n
         yield ("row", idx)
         yield ("progress", n, total)
+    prog.finished = True
+    prog.set_phase("", "")
 
 
 class Captioner:
@@ -416,6 +553,7 @@ class Captioner:
         self.events: "queue.Queue[tuple]" = queue.Queue()
         self.stop_event = threading.Event()
         self.worker: threading.Thread | None = None
+        self.progress = BatchProgress()
 
     def is_running(self) -> bool:
         return self.worker is not None and self.worker.is_alive()
@@ -432,9 +570,10 @@ class Captioner:
 
     def _run(self, jobs: list[Job], indices: list[int], s: "Settings", force: bool) -> None:
         try:
-            for ev in run_jobs(jobs, indices, s, force, self.stop_event):
+            for ev in run_jobs(jobs, indices, s, force, self.stop_event, progress=self.progress):
                 self.events.put(ev)
         except Exception as e:  # noqa: BLE001  (e.g. backend import failure)
+            self.progress.finished = True
             for idx in indices:
                 if jobs[idx].status in ("en attente", "en cours"):
                     jobs[idx].status, jobs[idx].error = "erreur", str(e)

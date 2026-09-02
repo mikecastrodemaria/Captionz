@@ -61,6 +61,7 @@ def collect_settings() -> Settings:
         recursive=W["recursive"].value,
         existing=W["existing"].value,
         temperature=float(W["temp"].value or 0),
+        max_tokens=int(W["maxtok"].value or 0),
         single_line=W["single"].value,
         keep_alive=str(W["keep"].value or "0"),
         max_side=int(W["maxside"].value or 0),
@@ -280,7 +281,8 @@ def start(indices: list[int] | None, force: bool = False) -> None:
     W["btn_sel"].disable()
     W["btn_stop"].enable()
     W["progress"].value = 0
-    W["progress_label"].text = f"0/{len(indices)}"
+    W["progress_label"].text = "0%"
+    W["status"].text = "démarrage…"
     log(f"Démarrage : {len(indices)} image(s) avec « {s.model} »"
         f"{'' if Image else ' (Pillow absent : images envoyées brutes)'}.")
     captioner.start(jobs, indices, s, force)
@@ -322,9 +324,9 @@ def poll_events() -> None:
                 elif j.status == "ok" and idx == current_index():
                     W["caption"].value = j.caption
                     W["capfile"].text = j.path.with_suffix(settings.extension).name + " (existe)"
-            elif ev[0] == "progress":
-                W["progress"].value = ev[1] / max(ev[2], 1)
-                W["progress_label"].text = f"{ev[1]}/{ev[2]}"
+            elif ev[0] == "phase":
+                if ev[2] == "chargement":
+                    log(f"Chargement du modèle « {settings.model} »…")
             elif ev[0] == "done":
                 ok = sum(j.status == "ok" for j in jobs)
                 err = sum(j.status == "erreur" for j in jobs)
@@ -337,6 +339,11 @@ def poll_events() -> None:
                 ui.notify("Captioning terminé", type="positive")
     except queue.Empty:
         pass
+    snap = captioner.progress.snapshot()
+    if captioner.is_running() or changed:
+        W["progress"].value = snap["fraction"]
+        W["progress_label"].text = f"{snap['fraction'] * 100:.0f}%"
+        W["status"].text = snap["text"]
     if changed or (captioner.is_running() and int(time.time() * 5) % 5 == 0):
         refresh_table()
 
@@ -447,6 +454,8 @@ def build() -> None:
                     W["keep"] = ui.input("keep_alive (0 = décharger)", value=str(s.keep_alive)).classes("w-44")
                     W["maxside"] = ui.number("Côté max px (0 = brut)", value=s.max_side, min=0, max=4096, step=128).classes("w-44")
                     W["cpu"] = ui.checkbox("Forcer CPU", value=s.cpu_only)
+                    W["maxtok"] = ui.number("Tokens max (0 = illimité)", value=s.max_tokens, min=0, max=8192, step=256) \
+                        .classes("w-44").tooltip("Borne la génération : un modèle qui divague est coupé au lieu de bloquer")
                     if Image is None:
                         W["maxside"].disable()
                         ui.label("(pip install pillow)").classes("text-sm opacity-70")
@@ -459,6 +468,7 @@ def build() -> None:
                     W["btn_stop"].disable()
                     W["progress"] = ui.linear_progress(value=0, show_value=False).classes("flex-grow")
                     W["progress_label"] = ui.label("")
+                W["status"] = ui.label("").classes("text-sm opacity-80 w-full")
                 W["log"] = ui.log(max_lines=300).classes("w-full h-40 text-xs")
 
         # ================= right column =================

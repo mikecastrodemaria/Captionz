@@ -44,6 +44,7 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--keep-alive", help="Ollama keep_alive, e.g. 10m or 0")
     b.add_argument("--cpu", action="store_true", default=None, help="Ollama: force CPU (num_gpu=0)")
     b.add_argument("--temperature", type=float)
+    b.add_argument("--max-tokens", type=int, help="cap generation (num_predict), default 1024, 0 = no cap")
     b.add_argument("--max-side", type=int, help="downscale images to this max side before upload (0 = raw)")
 
     p = ap.add_argument_group("prompt")
@@ -90,6 +91,8 @@ def settings_from_args(a: argparse.Namespace) -> Settings:
         s.cpu_only = a.cpu
     if a.temperature is not None:
         s.temperature = a.temperature
+    if a.max_tokens is not None:
+        s.max_tokens = a.max_tokens
     if a.max_side is not None:
         s.max_side = a.max_side
     if a.type:

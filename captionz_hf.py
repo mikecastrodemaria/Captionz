@@ -103,6 +103,12 @@ class HFBackend(Backend):
         """Load the default model on CPU (call at startup on Spaces)."""
         _load(self.model_id)
 
+    def is_loaded(self, model: str) -> bool:
+        return _STATE["id"] == (model or self.model_id)
+
+    def load(self, model: str) -> None:
+        _load(model or self.model_id)
+
     def caption(self, model, prompt, image_path, *, temperature=0.2, max_side=1024) -> str:
         model_id = model or self.model_id
         if Image is None:
