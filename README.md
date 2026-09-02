@@ -8,7 +8,7 @@ The Ollama layer reuses proven patterns from crispz-studio (`cz_ollama.py`): vis
 
 - Connect to any Ollama server (configurable URL, local or remote)
 - Automatic list of installed models **with the vision capability**
-- Sources: a single file, a selection of files, or a folder (recursive or not)
+- Sources: a single file, a selection of files, a folder (recursive or not), or **paste from the clipboard** (Ctrl+V: a screenshot or copied image is saved as PNG in `pasted/`, copied files are added directly)
 - **Composed prompt**: caption type (formal / casual descriptive, training caption, Stable Diffusion prompt, Booru tags, art critic, product listing, social media post, short sentence) × length (very short → very long) × checkable options (lighting, camera angle, watermark, JPEG artifacts, camera settings, keep it PG, aesthetic quality, composition, depth of field, sfw/nsfw, avoid words blocked by Midjourney and similar filters…)
 - Character name: `{name}` is substituted in the prompt and the options
 - Custom prompt that overrides everything, and a **preview of the final prompt** actually sent

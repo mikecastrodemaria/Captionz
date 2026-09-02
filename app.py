@@ -38,9 +38,9 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 try:
-    from PIL import Image, ImageTk  # optionnel : aperçu + réduction des images
+    from PIL import Image, ImageGrab, ImageTk  # optionnel : aperçu, réduction, collage
 except ImportError:  # pragma: no cover
-    Image = ImageTk = None
+    Image = ImageGrab = ImageTk = None
 
 APP_TITLE = "Captionz · Ollama vision captioning"
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
@@ -255,6 +255,7 @@ class Settings:
     max_side: int = 1024
     cpu_only: bool = False
     dark: bool = False
+    paste_dir: str = ""              # dossier des images collées (vide = ./pasted)
     vision_blocklist: list = field(default_factory=list)
 
     @property
@@ -384,6 +385,8 @@ class App(tk.Tk):
         ttk.Button(src, text="📄 Un fichier…", command=self.add_file).pack(side="left", **pad)
         ttk.Button(src, text="📑 Plusieurs fichiers…", command=self.add_files).pack(side="left", **pad)
         ttk.Button(src, text="📁 Un dossier…", command=self.add_folder).pack(side="left", **pad)
+        ttk.Button(src, text="📋 Coller (Ctrl+V)", command=self.paste_image).pack(side="left", **pad)
+        self.bind_all("<Control-v>", self._on_ctrl_v)
         self.var_recursive = tk.BooleanVar(value=s.recursive)
         ttk.Checkbutton(src, text="récursif", variable=self.var_recursive).pack(side="left", **pad)
         ttk.Separator(src, orient="vertical").pack(side="left", fill="y", padx=8, pady=4)
@@ -624,6 +627,7 @@ class App(tk.Tk):
             max_side=int(self.var_maxside.get() or 0),
             cpu_only=self.var_cpu.get(),
             dark=self.settings.dark,
+            paste_dir=self.settings.paste_dir,
             vision_blocklist=list(self.settings.vision_blocklist),
         )
         if not s.extension.startswith("."):
@@ -773,6 +777,60 @@ class App(tk.Tk):
     def _filetypes():
         pat = " ".join(f"*{e}" for e in sorted(IMAGE_EXTS))
         return [("Images", pat), ("Tous les fichiers", "*.*")]
+
+    # ---- collage depuis le presse-papiers --------------------------------- #
+    def _on_ctrl_v(self, event):
+        # ne pas intercepter le collage de texte dans les champs de saisie
+        if isinstance(event.widget, (tk.Text, tk.Entry, ttk.Entry, ttk.Combobox, ttk.Spinbox)):
+            return
+        self.paste_image()
+
+    def paste_image(self):
+        """Presse-papiers -> liste. Trois cas : des bitmaps (capture d'écran,
+        « copier l'image » d'un navigateur) enregistrés en PNG dans le dossier
+        de collage ; des fichiers copiés depuis l'explorateur ; ou un chemin
+        collé en texte."""
+        paths: list[Path] = []
+        data = None
+        if ImageGrab is not None:
+            try:
+                data = ImageGrab.grabclipboard()
+            except Exception as e:  # noqa: BLE001
+                self._log(f"Presse-papiers illisible : {e}")
+        if isinstance(data, list):                       # fichiers copiés dans l'explorateur
+            paths = [Path(p) for p in data]
+        elif data is not None and Image is not None and isinstance(data, Image.Image):
+            paste_dir = Path(self.settings.paste_dir or Path(__file__).with_name("pasted"))
+            paste_dir.mkdir(parents=True, exist_ok=True)
+            out = paste_dir / time.strftime("paste_%Y%m%d_%H%M%S.png")
+            n = 1
+            while out.exists():
+                out = paste_dir / time.strftime(f"paste_%Y%m%d_%H%M%S_{n}.png")
+                n += 1
+            data.convert("RGB").save(out, "PNG")
+            paths = [out]
+            self._log(f"Image collée enregistrée : {out}")
+        else:                                            # texte : chemin(s) de fichier
+            try:
+                txt = self.clipboard_get()
+            except tk.TclError:
+                txt = ""
+            for line in txt.replace('"', "").splitlines():
+                p = Path(line.strip())
+                if line.strip() and p.exists():
+                    paths.append(p)
+        if not paths:
+            msg = "Aucune image dans le presse-papiers."
+            if ImageGrab is None:
+                msg += " Installe Pillow (pip install pillow) pour coller des captures d'écran."
+            self._log(msg)
+            return
+        self._add_paths(paths)
+        if paths:
+            last = str(len(self.jobs) - 1)
+            self.tree.selection_set(last)
+            self.tree.see(last)
+            self._on_select()
 
     def remove_selected(self):
         if self._is_running():

@@ -9,3 +9,6 @@ test_images/
 bench_results.*
 benchmarks/*.log
 benchmarks/*.log.err
+
+# pasted clipboard images
+pasted/
