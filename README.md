@@ -1,6 +1,6 @@
 # Captionz
 
-Batch image captioning with a **vision** model served by [Ollama](https://ollama.com). Desktop app in Python / Tkinter, standard library only (Pillow optional).
+Batch image captioning with a **vision** model served by [Ollama](https://ollama.com). Two interfaces on the same core: a Tkinter desktop app (standard library only) and a NiceGUI web UI (`--ui web`).
 
 The Ollama layer reuses proven patterns from crispz-studio (`cz_ollama.py`): vision detection through `/api/show` with a name-based fallback, JPEG downscaling before upload, stripping of `<think>` blocks from "thinking" models, `keep_alive` / CPU mode so the model does not hog VRAM.
 
@@ -37,15 +37,25 @@ ollama pull qwen3-vl:8b
 
 The scripts create a `.venv` virtual environment and install Pillow.
 
-| Platform | Install | Run |
-|---|---|---|
-| Windows (cmd) | `install.bat` | `start.bat` |
-| Windows (PowerShell) | `.\install.ps1` | `.\start.ps1` |
-| Linux / macOS | `./install.sh` | `./start.sh` |
+| Platform | Install | Desktop UI | Web UI |
+|---|---|---|---|
+| Windows (cmd) | `install.bat` | `start.bat` | `start-web.bat` |
+| Windows (PowerShell) | `.\install.ps1` | `.\start.ps1` | `.\start-web.ps1` |
+| Linux / macOS | `./install.sh` | `./start.sh` | `./start-web.sh` |
 
 If PowerShell refuses to run the script: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
 
-Without the scripts, `python app.py` is enough (Pillow optional).
+Without the scripts:
+
+```bash
+python app.py                                  # Tkinter desktop UI (default)
+python app.py --ui web                         # NiceGUI web UI, opens http://127.0.0.1:8080
+python app.py --ui web --port 8090 --host 0.0.0.0 --no-browser   # expose on the LAN, no auto-open
+```
+
+The web UI (`webui.py`) needs `pip install nicegui` (done by the install scripts). Both UIs share `captionz_core.py` (Ollama client, prompt composition, settings, background captioning) and the same `settings.json`.
+
+Web UI sources: a local path (file or folder) typed in the page, browser upload (files are copied to `pasted/uploads`), or Ctrl+V of a screenshot / copied image anywhere in the page.
 
 ## Model benchmark
 

@@ -26,7 +26,7 @@ import urllib.error
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from app import DEFAULT_PROMPT, IMAGE_EXTS, OllamaClient  # noqa: E402
+from captionz_core import DEFAULT_PROMPT, IMAGE_EXTS, OllamaClient  # noqa: E402
 
 NS = 1e9
 

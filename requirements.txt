@@ -1,2 +1,3 @@
-# Aucune dépendance obligatoire (stdlib). Optionnel :
-pillow>=10
+# Optional dependencies (the Tkinter UI needs none of them):
+pillow>=10        # image preview, downscaling before upload, clipboard paste
+nicegui>=3.0      # web UI: python app.py --ui web

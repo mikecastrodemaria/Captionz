@@ -1,6 +1,12 @@
 """
 Captionz — batch image captioning through Ollama vision models.
 
+Entry point. Two interfaces share the same core (captionz_core.py):
+
+    python app.py               # Tkinter desktop UI (default, stdlib only)
+    python app.py --ui web      # NiceGUI web UI (pip install nicegui), opens the browser
+    python app.py --ui web --port 8090 --no-browser
+
 The Ollama layer reuses patterns from crispz-studio (cz_ollama.py): vision
 detection through /api/show with a name-based fallback, images downscaled to
 JPEG before upload (when Pillow is installed), stripping of <think> blocks,
@@ -8,7 +14,8 @@ configurable keep_alive / CPU mode so the model does not hog VRAM.
 
 Features:
   - Connect to an Ollama server (configurable URL), models filtered on "vision"
-  - Sources: a single file, a selection of files, or a folder (recursive or not)
+  - Sources: a single file, a selection of files, a folder (recursive or not),
+    or an image pasted from the clipboard (Ctrl+V)
   - Composed prompt: caption type × length × checkable options × character
     name ({name}), or a custom prompt that overrides everything
   - Final prompt preview, image preview, editable caption + save
@@ -23,279 +30,28 @@ The UI language is French.
 
 from __future__ import annotations
 
-import base64
-import io
-import json
+import argparse
 import queue
-import re
+import sys
 import threading
 import time
 import tkinter as tk
-import urllib.error
-import urllib.request
-from dataclasses import dataclass, field
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
+from captionz_core import (  # noqa: F401  (re-exported for bench.py and older imports)
+    APP_TITLE, CAPTION_LENGTHS, CAPTION_TYPES, DEFAULT_OLLAMA_URL, DEFAULT_PROMPT, EXTRA_OPTIONS,
+    IMAGE_EXTS, Captioner, Job, OllamaClient, Settings, build_prompt, collect_images, save_pasted_image,
+)
+
 try:
-    from PIL import Image, ImageGrab, ImageTk  # optionnel : aperçu, réduction, collage
+    from PIL import Image, ImageGrab, ImageTk  # optional: preview, downscaling, paste
 except ImportError:  # pragma: no cover
     Image = ImageGrab = ImageTk = None
 
-APP_TITLE = "Captionz · Ollama vision captioning"
-DEFAULT_OLLAMA_URL = "http://localhost:11434"
-IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".tif", ".tiff"}
-SETTINGS_FILE = Path(__file__).with_name("settings.json")
 
 # --------------------------------------------------------------------------- #
-# Composition du prompt (inspiré de JoyCaption : type × longueur × options)
-# --------------------------------------------------------------------------- #
-CAPTION_TYPES: dict[str, str] = {
-    "Descriptive (formal)":
-        "Write a {length} descriptive caption for this image in a formal tone.",
-    "Descriptive (casual)":
-        "Write a {length} descriptive caption for this image in a casual, natural tone.",
-    "Training caption (paragraph)":
-        "Write a {length} caption of this image for use as a training caption. Mention the subject, "
-        "setting, composition, lighting, colors, style and mood. Do not start with 'This image shows'.",
-    "Stable Diffusion prompt":
-        "Output a {length} Stable Diffusion prompt that would generate this image: comma-separated "
-        "visual tags (subject, clothing, setting, lighting, style, quality).",
-    "Booru tag list":
-        "Write a {length} comma-separated list of Booru-style tags for this image, lowercase, "
-        "underscores instead of spaces.",
-    "Art critic analysis":
-        "Analyze this image like an art critic would, with information about its composition, style, "
-        "symbolism, the use of color, light, any artistic movement it belongs to, etc. Be {length}.",
-    "Product listing":
-        "Write a {length} product listing style caption for this image.",
-    "Social media post":
-        "Write a {length} caption for this image as if it were a social media post.",
-    "Short sentence":
-        "Describe this image in one short sentence.",
-}
-CAPTION_LENGTHS: dict[str, str] = {
-    "any": "",
-    "very short": "very short",
-    "short": "short",
-    "medium-length": "medium-length",
-    "long": "long",
-    "very long": "very long",
-}
-EXTRA_OPTIONS: list[str] = [
-    "If there is a person/character in the image you must refer to them as {name}.",
-    "Do NOT include information about people/characters that cannot be changed (like ethnicity, gender, etc), "
-    "but do still include changeable attributes (like hair style).",
-    "Include information about lighting.",
-    "Include information about camera angle.",
-    "Include information about whether there is a watermark or not.",
-    "Include information about whether there are JPEG artifacts or not.",
-    "If it is a photo you MUST include information about what camera was likely used and details such as "
-    "aperture, shutter speed, ISO, etc.",
-    "Do NOT include anything sexual; keep it PG.",
-    "Do NOT mention the image's resolution.",
-    "You MUST include information about the subjective aesthetic quality of the image from low to very high.",
-    "Include information on the image's composition style, such as leading lines, rule of thirds, or symmetry.",
-    "Do NOT mention any text that is in the image.",
-    "Specify the depth of field and whether the background is in focus or blurred.",
-    "If applicable, mention the likely use of artificial or natural lighting sources.",
-    "Do NOT use any ambiguous language.",
-    "Include whether the image is sfw, suggestive, or nsfw.",
-    "ONLY describe the most important elements of the image.",
-    "Avoid any word that would be blocked by Midjourney, DALL-E or similar content filters (nudity, sexual terms, "
-    "gore, blood, violence, weapons, drugs, body parts, real celebrity names, political or religious figures); "
-    "rephrase with neutral, safe wording instead of omitting the element.",
-    "Do NOT start with 'This image shows' or 'The image depicts'.",
-    "Output only the caption, no preamble, no quotes, no markdown.",
-]
-
-
-def build_prompt(caption_type: str, length: str, options: list[str], name: str, custom: str) -> str:
-    """Prompt final envoyé au modèle. Un prompt personnalisé remplace tout
-    (mais {name} y est aussi substitué)."""
-    name = name.strip() or "the main character"
-    if custom.strip():
-        return custom.strip().replace("{name}", name)
-    template = CAPTION_TYPES.get(caption_type, CAPTION_TYPES["Descriptive (formal)"])
-    length_word = CAPTION_LENGTHS.get(length, "")
-    base = template.replace("{length}", length_word)
-    base = re.sub(r"\s{2,}", " ", base).replace(" .", ".").replace("Be .", "").strip()
-    parts = [base] + [o.replace("{name}", name) for o in options]
-    return " ".join(p.strip() for p in parts if p.strip())
-
-
-DEFAULT_PROMPT = build_prompt("Training caption (paragraph)", "long",
-                              ["Output only the caption, no preamble, no quotes, no markdown."], "", "")
-# Noms clairement multimodaux : repli quand /api/show ne renvoie pas `capabilities`
-VISION_NAME_HINTS = ("llava", "-vl", "vl:", "moondream", "minicpm-v", "bakllava",
-                     "llama3.2-vision", "llama-3.2-vision", "vision")
-_THINK_RE = re.compile(r"<think>[\s\S]*?(?:</think>|$)", re.IGNORECASE)
-
-
-# --------------------------------------------------------------------------- #
-# Client Ollama (stdlib uniquement)
-# --------------------------------------------------------------------------- #
-class OllamaClient:
-    def __init__(self, base_url: str, timeout: int = 600):
-        self.base_url = base_url.rstrip("/")
-        self.timeout = timeout
-
-    def _request(self, method: str, path: str, payload: dict | None = None) -> dict:
-        data = json.dumps(payload).encode("utf-8") if payload is not None else None
-        req = urllib.request.Request(self.base_url + path, data=data, method=method,
-                                     headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-
-    def list_models(self) -> list[dict]:
-        return self._request("GET", "/api/tags").get("models", [])
-
-    def show(self, name: str) -> dict:
-        return self._request("POST", "/api/show", {"model": name})
-
-    def list_vision_models(self, blocklist: list[str] | None = None) -> list[str]:
-        """Modèles réellement capables de vision (pattern crispz-studio).
-
-        Source autoritaire : la capacité "vision" de /api/show (ou de /api/tags
-        sur les Ollama récents). Si le champ est absent (vieille version), repli
-        sur un nom clairement multimodal. Les familles (clip…) ne sont PAS
-        utilisées : elles donnent des faux positifs.
-        """
-        block = [b.lower() for b in (blocklist or []) if b]
-        vision = []
-        for m in self.list_models():
-            name = m.get("name") or m.get("model")
-            if not name or any(b in name.lower() for b in block):
-                continue
-            caps = m.get("capabilities")
-            if caps is None:
-                try:
-                    caps = self.show(name).get("capabilities")
-                except Exception:
-                    caps = None
-            if caps:
-                if "vision" in [c.lower() for c in caps]:
-                    vision.append(name)
-            elif any(k in name.lower() for k in VISION_NAME_HINTS):
-                vision.append(name)
-        vision.sort(key=lambda n: (0 if any(k in n.lower() for k in VISION_NAME_HINTS) else 1, n.lower()))
-        return vision
-
-    @staticmethod
-    def encode_image(path: Path, max_side: int = 1024, quality: int = 85) -> str:
-        """Image -> base64. Réduite en JPEG si Pillow est dispo (moins de tokens,
-        upload plus rapide, mêmes captions) ; sinon octets bruts."""
-        if Image is not None and max_side > 0:
-            try:
-                img = Image.open(path).convert("RGB")
-                w, h = img.size
-                if max(w, h) > max_side:
-                    if w >= h:
-                        img = img.resize((max_side, int(h * max_side / w)), Image.LANCZOS)
-                    else:
-                        img = img.resize((int(w * max_side / h), max_side), Image.LANCZOS)
-                buf = io.BytesIO()
-                img.save(buf, "JPEG", quality=quality)
-                return base64.b64encode(buf.getvalue()).decode("ascii")
-            except Exception:
-                pass
-        return base64.b64encode(path.read_bytes()).decode("ascii")
-
-    @staticmethod
-    def strip_thinking(text: str) -> str:
-        """Modèles "thinking" (Qwen3+, DeepSeek-R1…) : le raisonnement ne doit
-        jamais finir dans la caption. On garde ce qui suit le dernier </think>."""
-        if "</think>" in text:
-            text = text.rsplit("</think>", 1)[1]
-        return _THINK_RE.sub("", text).strip().strip('"')
-
-    def caption(self, model: str, prompt: str, image_path: Path, temperature: float = 0.2,
-                keep_alive: str | int = "10m", max_side: int = 1024, cpu_only: bool = False) -> str:
-        options: dict = {"temperature": temperature}
-        if cpu_only:
-            options["num_gpu"] = 0  # 0 VRAM partagée (plus lent)
-        payload = {
-            "model": model, "stream": False, "keep_alive": keep_alive, "options": options,
-            "messages": [{"role": "user", "content": prompt,
-                          "images": [self.encode_image(image_path, max_side)]}],
-        }
-        resp = self._request("POST", "/api/chat", payload)
-        return self.strip_thinking((resp.get("message") or {}).get("content", ""))
-
-
-# --------------------------------------------------------------------------- #
-# Modèle de données
-# --------------------------------------------------------------------------- #
-@dataclass
-class Job:
-    path: Path
-    status: str = "en attente"
-    caption: str = ""
-    error: str = ""
-    duration: float = 0.0
-
-
-@dataclass
-class Settings:
-    ollama_url: str = DEFAULT_OLLAMA_URL
-    model: str = ""
-    caption_type: str = "Training caption (paragraph)"
-    caption_length: str = "long"
-    options: list = field(default_factory=lambda: ["Output only the caption, no preamble, no quotes, no markdown."])
-    name: str = ""
-    custom_prompt: str = ""
-    prefix: str = ""
-    suffix: str = ""
-    extension: str = ".txt"
-    recursive: bool = True
-    existing: str = "skip"          # skip | overwrite | append
-    temperature: float = 0.2
-    single_line: bool = True
-    keep_alive: str = "10m"
-    max_side: int = 1024
-    cpu_only: bool = False
-    dark: bool = False
-    paste_dir: str = ""              # dossier des images collées (vide = ./pasted)
-    vision_blocklist: list = field(default_factory=list)
-
-    @property
-    def prompt(self) -> str:
-        return build_prompt(self.caption_type, self.caption_length, self.options, self.name, self.custom_prompt)
-
-    @classmethod
-    def load(cls) -> "Settings":
-        try:
-            data = json.loads(SETTINGS_FILE.read_text("utf-8"))
-            return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
-        except Exception:
-            return cls()
-
-    def save(self) -> None:
-        try:
-            SETTINGS_FILE.write_text(json.dumps(self.__dict__, indent=2, ensure_ascii=False), "utf-8")
-        except Exception:
-            pass
-
-
-def collect_images(paths: list[Path], recursive: bool) -> list[Path]:
-    found: list[Path] = []
-    for p in paths:
-        if p.is_dir():
-            it = p.rglob("*") if recursive else p.glob("*")
-            found.extend(f for f in it if f.is_file() and f.suffix.lower() in IMAGE_EXTS)
-        elif p.is_file() and p.suffix.lower() in IMAGE_EXTS:
-            found.append(p)
-    seen: set[Path] = set()
-    out = []
-    for f in sorted(found):
-        if f not in seen:
-            seen.add(f)
-            out.append(f)
-    return out
-
-
-# --------------------------------------------------------------------------- #
-# Thèmes
+# Themes
 # --------------------------------------------------------------------------- #
 THEMES = {
     "light": dict(bg="#f3f3f3", fg="#1b1b1b", field="#ffffff", sel="#cfe3ff", border="#c8c8c8",
@@ -306,7 +62,7 @@ THEMES = {
 
 
 class ScrollFrame(ttk.Frame):
-    """Frame défilable verticalement (pour la longue liste d'options)."""
+    """Vertically scrollable frame (for the long options list)."""
 
     def __init__(self, parent, height=220, **kw):
         super().__init__(parent, **kw)
@@ -328,7 +84,7 @@ class ScrollFrame(ttk.Frame):
 
 
 # --------------------------------------------------------------------------- #
-# Interface
+# Tkinter UI
 # --------------------------------------------------------------------------- #
 class App(tk.Tk):
     def __init__(self):
@@ -339,11 +95,12 @@ class App(tk.Tk):
 
         self.settings = Settings.load()
         self.jobs: list[Job] = []
-        self.worker: threading.Thread | None = None
-        self.stop_event = threading.Event()
+        self.captioner = Captioner()
         self.ui_queue: "queue.Queue[tuple]" = queue.Queue()
         self._preview_img = None
+        self._preview_path: Path | None = None
         self._text_widgets: list[tk.Text] = []
+        self._last_total = 0
 
         self.style = ttk.Style(self)
         self.style.theme_use("clam")
@@ -364,7 +121,7 @@ class App(tk.Tk):
         paned.add(left, weight=3)
         paned.add(right, weight=2)
 
-        # ================= colonne gauche : réglages =================
+        # ================= left column: settings =================
         top = ttk.LabelFrame(left, text="Ollama")
         top.pack(fill="x", **pad)
         ttk.Label(top, text="URL :").grid(row=0, column=0, sticky="w", **pad)
@@ -395,7 +152,7 @@ class App(tk.Tk):
         self.lbl_count = ttk.Label(src, text="0 image")
         self.lbl_count.pack(side="right", **pad)
 
-        # --- prompt composé ---
+        # --- composed prompt ---
         pf = ttk.LabelFrame(left, text="Prompt")
         pf.pack(fill="both", expand=True, **pad)
         row = ttk.Frame(pf)
@@ -441,7 +198,7 @@ class App(tk.Tk):
         self.txt_preview.pack(fill="both", expand=True, padx=6, pady=(0, 4))
         self._text_widgets.append(self.txt_preview)
 
-        # --- sortie ---
+        # --- output ---
         of = ttk.LabelFrame(left, text="Sortie")
         of.pack(fill="x", **pad)
         self.var_prefix = tk.StringVar(value=s.prefix)
@@ -462,7 +219,7 @@ class App(tk.Tk):
             ttk.Radiobutton(rf, text=txt, value=val, variable=self.var_existing).pack(side="left", padx=4)
         ttk.Checkbutton(of, text="Une seule ligne", variable=self.var_single).grid(row=1, column=4, columnspan=2, sticky="w", **pad)
 
-        # --- modèle / perf ---
+        # --- model / perf ---
         mf = ttk.LabelFrame(left, text="Modèle")
         mf.pack(fill="x", **pad)
         self.var_temp = tk.DoubleVar(value=s.temperature)
@@ -481,7 +238,7 @@ class App(tk.Tk):
             ttk.Label(mf, text="(pip install pillow)").grid(row=0, column=6, sticky="w")
         ttk.Checkbutton(mf, text="Forcer CPU", variable=self.var_cpu).grid(row=0, column=7, sticky="w", **pad)
 
-        # --- contrôles ---
+        # --- controls ---
         ctl = ttk.Frame(left)
         ctl.pack(fill="x", **pad)
         self.btn_start = ttk.Button(ctl, text="▶ Captionner tout", command=lambda: self.start(None))
@@ -500,7 +257,7 @@ class App(tk.Tk):
         self.log.pack(fill="x", padx=6, pady=(0, 6))
         self._text_widgets.append(self.log)
 
-        # ================= colonne droite : images =================
+        # ================= right column: images =================
         lf = ttk.LabelFrame(right, text="Images")
         lf.pack(fill="both", expand=True, **pad)
         cols = ("file", "status", "time")
@@ -537,7 +294,7 @@ class App(tk.Tk):
 
         self._update_prompt_preview()
 
-    # ---- thème ------------------------------------------------------------ #
+    # ---- theme ------------------------------------------------------------ #
     def apply_theme(self, dark: bool):
         t = THEMES["dark" if dark else "light"]
         self.settings.dark = dark
@@ -568,9 +325,9 @@ class App(tk.Tk):
             w.configure(bg=t["field"], fg=t["fg"], insertbackground=t["fg"], selectbackground=t["sel"],
                         highlightthickness=1, highlightbackground=t["border"], relief="flat")
         self.canvas.configure(bg=t["field"])
-        for sf in self._all_children(self, tk.Canvas):
-            if sf is not self.canvas:
-                sf.configure(bg=t["bg"])
+        for c in self._all_children(self, tk.Canvas):
+            if c is not self.canvas:
+                c.configure(bg=t["bg"])
         self.tree.tag_configure("ok", foreground=t["ok"])
         self.tree.tag_configure("err", foreground=t["err"])
         self.tree.tag_configure("skip", foreground=t["skip"])
@@ -590,7 +347,7 @@ class App(tk.Tk):
             out.extend(App._all_children(c, cls))
         return out
 
-    # ---- helpers UI ----------------------------------------------------- #
+    # ---- UI helpers ------------------------------------------------------ #
     def _log(self, msg: str):
         self.log.configure(state="normal")
         self.log.insert("end", time.strftime("[%H:%M:%S] ") + msg + "\n")
@@ -608,7 +365,7 @@ class App(tk.Tk):
         self.txt_preview.configure(state="disabled")
 
     def _collect_settings(self) -> Settings:
-        s = Settings(
+        return Settings(
             ollama_url=self.var_url.get().strip() or DEFAULT_OLLAMA_URL,
             model=self.var_model.get().strip(),
             caption_type=self.var_type.get(),
@@ -629,12 +386,7 @@ class App(tk.Tk):
             dark=self.settings.dark,
             paste_dir=self.settings.paste_dir,
             vision_blocklist=list(self.settings.vision_blocklist),
-        )
-        if not s.extension.startswith("."):
-            s.extension = "." + s.extension
-        if s.keep_alive.isdigit():
-            s.keep_alive = int(s.keep_alive)  # type: ignore[assignment]
-        return s
+        ).normalized()
 
     def _update_count(self):
         n = len(self.jobs)
@@ -653,7 +405,7 @@ class App(tk.Tk):
         sel = self._selected_indices()
         return sel[0] if sel else None
 
-    # ---- aperçu + caption éditable ---------------------------------------- #
+    # ---- preview + editable caption -------------------------------------- #
     def _on_select(self, _event=None):
         idx = self._current_index()
         if idx is None:
@@ -674,7 +426,7 @@ class App(tk.Tk):
     def _show_preview(self, path: Path | None = None):
         if path is not None:
             self._preview_path = path
-        path = getattr(self, "_preview_path", None)
+        path = self._preview_path
         self.canvas.delete("all")
         w, h = max(self.canvas.winfo_width(), 50), max(self.canvas.winfo_height(), 50)
         t = getattr(self, "_theme", THEMES["light"])
@@ -687,7 +439,7 @@ class App(tk.Tk):
                 img.thumbnail((w - 8, h - 8))
                 self._preview_img = ImageTk.PhotoImage(img)
             else:
-                img = tk.PhotoImage(file=str(path))  # PNG/GIF seulement
+                img = tk.PhotoImage(file=str(path))  # PNG/GIF only
                 f = max(1, int(max(img.width() / (w - 8), img.height() / (h - 8))) + 1)
                 self._preview_img = img.subsample(f, f)
             self.canvas.create_image(w / 2, h / 2, image=self._preview_img)
@@ -710,7 +462,7 @@ class App(tk.Tk):
         self.lbl_caption_file.configure(text=out.name + " (existe)")
         self._log(f"💾 {out.name} enregistré.")
 
-    # ---- modèles -------------------------------------------------------- #
+    # ---- models ---------------------------------------------------------- #
     def refresh_models(self):
         url = self.var_url.get().strip() or DEFAULT_OLLAMA_URL
         self.lbl_conn.configure(text="connexion…")
@@ -739,7 +491,7 @@ class App(tk.Tk):
             self.lbl_conn.configure(text="aucun modèle vision")
             self._log("Aucun modèle vision trouvé. Exemple : `ollama pull qwen3-vl:8b`.")
 
-    # ---- sources -------------------------------------------------------- #
+    # ---- sources --------------------------------------------------------- #
     def _add_paths(self, paths: list[Path]):
         images = collect_images(paths, self.var_recursive.get())
         existing = {j.path for j in self.jobs}
@@ -778,18 +530,17 @@ class App(tk.Tk):
         pat = " ".join(f"*{e}" for e in sorted(IMAGE_EXTS))
         return [("Images", pat), ("Tous les fichiers", "*.*")]
 
-    # ---- collage depuis le presse-papiers --------------------------------- #
+    # ---- paste from clipboard -------------------------------------------- #
     def _on_ctrl_v(self, event):
-        # ne pas intercepter le collage de texte dans les champs de saisie
+        # keep the normal paste behaviour inside text fields
         if isinstance(event.widget, (tk.Text, tk.Entry, ttk.Entry, ttk.Combobox, ttk.Spinbox)):
             return
         self.paste_image()
 
     def paste_image(self):
-        """Presse-papiers -> liste. Trois cas : des bitmaps (capture d'écran,
-        « copier l'image » d'un navigateur) enregistrés en PNG dans le dossier
-        de collage ; des fichiers copiés depuis l'explorateur ; ou un chemin
-        collé en texte."""
+        """Clipboard -> list. Three cases: a bitmap (screenshot, browser "copy
+        image") saved as PNG in the paste folder; files copied in the file
+        explorer; or a path pasted as text."""
         paths: list[Path] = []
         data = None
         if ImageGrab is not None:
@@ -797,20 +548,13 @@ class App(tk.Tk):
                 data = ImageGrab.grabclipboard()
             except Exception as e:  # noqa: BLE001
                 self._log(f"Presse-papiers illisible : {e}")
-        if isinstance(data, list):                       # fichiers copiés dans l'explorateur
+        if isinstance(data, list):                       # files copied in the explorer
             paths = [Path(p) for p in data]
         elif data is not None and Image is not None and isinstance(data, Image.Image):
-            paste_dir = Path(self.settings.paste_dir or Path(__file__).with_name("pasted"))
-            paste_dir.mkdir(parents=True, exist_ok=True)
-            out = paste_dir / time.strftime("paste_%Y%m%d_%H%M%S.png")
-            n = 1
-            while out.exists():
-                out = paste_dir / time.strftime(f"paste_%Y%m%d_%H%M%S_{n}.png")
-                n += 1
-            data.convert("RGB").save(out, "PNG")
+            out = save_pasted_image(data, self.settings.paste_path)
             paths = [out]
             self._log(f"Image collée enregistrée : {out}")
-        else:                                            # texte : chemin(s) de fichier
+        else:                                            # text: file path(s)
             try:
                 txt = self.clipboard_get()
             except tk.TclError:
@@ -826,14 +570,13 @@ class App(tk.Tk):
             self._log(msg)
             return
         self._add_paths(paths)
-        if paths:
-            last = str(len(self.jobs) - 1)
-            self.tree.selection_set(last)
-            self.tree.see(last)
-            self._on_select()
+        last = str(len(self.jobs) - 1)
+        self.tree.selection_set(last)
+        self.tree.see(last)
+        self._on_select()
 
     def remove_selected(self):
-        if self._is_running():
+        if self.captioner.is_running():
             return
         sel = set(self._selected_indices())
         if not sel:
@@ -842,7 +585,7 @@ class App(tk.Tk):
         self._rebuild_tree()
 
     def clear_jobs(self):
-        if self._is_running():
+        if self.captioner.is_running():
             return
         self.jobs.clear()
         self._rebuild_tree()
@@ -858,10 +601,7 @@ class App(tk.Tk):
             self._refresh_row(idx)
         self._update_count()
 
-    # ---- exécution ------------------------------------------------------ #
-    def _is_running(self) -> bool:
-        return self.worker is not None and self.worker.is_alive()
-
+    # ---- run ------------------------------------------------------------- #
     def start_selected(self):
         sel = self._selected_indices()
         if not sel:
@@ -874,11 +614,10 @@ class App(tk.Tk):
         if idx is None:
             messagebox.showinfo(APP_TITLE, "Sélectionne une image dans la liste.")
             return
-        # une image explicitement demandée : on écrase toujours
-        self.start([idx], force=True)
+        self.start([idx], force=True)  # explicitly requested: always overwrite
 
     def start(self, indices: list[int] | None, force: bool = False):
-        if self._is_running():
+        if self.captioner.is_running():
             return
         s = self._collect_settings()
         if not s.model:
@@ -891,7 +630,6 @@ class App(tk.Tk):
             indices = list(range(len(self.jobs)))
         self.settings = s
         s.save()
-        self.stop_event.clear()
         for b in (self.btn_start, self.btn_sel):
             b.configure(state="disabled")
         self.btn_stop.configure(state="normal")
@@ -899,74 +637,40 @@ class App(tk.Tk):
         self.lbl_progress.configure(text=f"0/{len(indices)}")
         self._log(f"Démarrage : {len(indices)} image(s) avec « {s.model} »"
                   f"{'' if Image else ' (Pillow absent : images envoyées brutes)'}.")
-        self.worker = threading.Thread(target=self._run, args=(s, indices, force), daemon=True)
-        self.worker.start()
+        self.captioner.start(self.jobs, indices, s, force)
 
     def stop(self):
-        if self._is_running():
-            self.stop_event.set()
+        if self.captioner.is_running():
+            self.captioner.stop()
             self._log("Arrêt demandé, fin de l'image en cours…")
 
-    def _run(self, s: Settings, indices: list[int], force: bool):
-        client = OllamaClient(s.ollama_url)
-        prompt = s.prompt
-        for n, idx in enumerate(indices, 1):
-            if self.stop_event.is_set():
-                break
-            job = self.jobs[idx]
-            out = job.path.with_suffix(s.extension)
-            if out.exists() and s.existing == "skip" and not force:
-                job.status, job.error = "ignoré", "caption déjà présente"
-                self.ui_queue.put(("row", idx, None))
-                self.ui_queue.put(("progress", n, len(indices)))
-                continue
-            job.status = "en cours"
-            self.ui_queue.put(("row", idx, None))
-            t0 = time.time()
-            try:
-                text = client.caption(s.model, prompt, job.path, temperature=s.temperature,
-                                      keep_alive=s.keep_alive, max_side=s.max_side, cpu_only=s.cpu_only)
-                if s.single_line:
-                    text = " ".join(text.split())
-                text = f"{s.prefix}{text}{s.suffix}".strip()
-                if not text:
-                    raise RuntimeError("réponse vide du modèle")
-                if out.exists() and s.existing == "append" and not force:
-                    old = out.read_text("utf-8").rstrip("\n")
-                    text = (old + "\n" + text) if old else text
-                out.write_text(text + "\n", encoding="utf-8")
-                job.caption, job.status, job.error = text, "ok", ""
-            except urllib.error.HTTPError as e:
-                body = e.read().decode("utf-8", "replace")[:300]
-                job.status, job.error = "erreur", f"HTTP {e.code}: {body}"
-            except Exception as e:  # noqa: BLE001
-                job.status, job.error = "erreur", str(e)
-            job.duration = time.time() - t0
-            self.ui_queue.put(("row", idx, None))
-            self.ui_queue.put(("progress", n, len(indices)))
-        self.ui_queue.put(("done", None, None))
-
-    # ---- boucle UI ------------------------------------------------------ #
+    # ---- UI loop --------------------------------------------------------- #
     def _poll_ui_queue(self):
         try:
             while True:
                 kind, a, b = self.ui_queue.get_nowait()
                 if kind == "models":
                     self._apply_models(a, b)
-                elif kind == "row":
-                    self._refresh_row(a)
-                    job = self.jobs[a]
+        except queue.Empty:
+            pass
+        try:
+            while True:
+                ev = self.captioner.events.get_nowait()
+                if ev[0] == "row":
+                    idx = ev[1]
+                    self._refresh_row(idx)
+                    job = self.jobs[idx]
                     if job.status == "erreur":
                         self._log(f"✖ {job.path.name} : {job.error}")
-                    elif job.status == "ok" and a == self._current_index():
+                    elif job.status == "ok" and idx == self._current_index():
                         self.txt_caption.delete("1.0", "end")
                         self.txt_caption.insert("1.0", job.caption)
                         self.lbl_caption_file.configure(
                             text=job.path.with_suffix(self.settings.extension).name + " (existe)")
-                elif kind == "progress":
-                    self.progress.configure(value=a)
-                    self.lbl_progress.configure(text=f"{a}/{b}")
-                elif kind == "done":
+                elif ev[0] == "progress":
+                    self.progress.configure(value=ev[1])
+                    self.lbl_progress.configure(text=f"{ev[1]}/{ev[2]}")
+                elif ev[0] == "done":
                     self._on_done()
         except queue.Empty:
             pass
@@ -976,16 +680,17 @@ class App(tk.Tk):
         ok = sum(j.status == "ok" for j in self.jobs)
         err = sum(j.status == "erreur" for j in self.jobs)
         skip = sum(j.status == "ignoré" for j in self.jobs)
-        self._log(f"{'Arrêté' if self.stop_event.is_set() else 'Terminé'} : {ok} ok, {skip} ignoré(s), {err} erreur(s).")
+        stopped = self.captioner.stop_event.is_set()
+        self._log(f"{'Arrêté' if stopped else 'Terminé'} : {ok} ok, {skip} ignoré(s), {err} erreur(s).")
         for b in (self.btn_start, self.btn_sel):
             b.configure(state="normal")
         self.btn_stop.configure(state="disabled")
 
     def _on_close(self):
-        if self._is_running():
+        if self.captioner.is_running():
             if not messagebox.askyesno(APP_TITLE, "Un traitement est en cours. Quitter quand même ?"):
                 return
-            self.stop_event.set()
+            self.captioner.stop()
         try:
             self._collect_settings().save()
         except Exception:
@@ -993,5 +698,26 @@ class App(tk.Tk):
         self.destroy()
 
 
+# --------------------------------------------------------------------------- #
+# Entry point: choose the UI
+# --------------------------------------------------------------------------- #
+def main(argv: list[str] | None = None) -> None:
+    ap = argparse.ArgumentParser(description="Captionz — Ollama vision captioning")
+    ap.add_argument("--ui", choices=["tk", "web"], default="tk",
+                    help="tk = Tkinter desktop UI (default), web = NiceGUI web UI")
+    ap.add_argument("--port", type=int, default=8080, help="web UI port (default 8080)")
+    ap.add_argument("--host", default="127.0.0.1", help="web UI host (default 127.0.0.1; 0.0.0.0 to expose on the LAN)")
+    ap.add_argument("--no-browser", action="store_true", help="web UI: do not open the browser automatically")
+    a = ap.parse_args(argv)
+    if a.ui == "web":
+        try:
+            import webui
+        except ImportError as e:
+            sys.exit(f"NiceGUI is not installed ({e}). Run: pip install nicegui")
+        webui.main(host=a.host, port=a.port, show=not a.no_browser)
+    else:
+        App().mainloop()
+
+
 if __name__ == "__main__":
-    App().mainloop()
+    main()
