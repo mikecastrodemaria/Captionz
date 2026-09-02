@@ -220,6 +220,7 @@ class Job:
     caption: str = ""
     error: str = ""
     duration: float = 0.0
+    started: float = 0.0            # time.time() when the current run started (live elapsed display)
 
 
 @dataclass
@@ -364,7 +365,7 @@ def caption_job(job: Job, s: "Settings", backend: Backend, force: bool = False) 
         job.status, job.error = "ignoré", "caption déjà présente"
         return job
     job.status = "en cours"
-    t0 = time.time()
+    job.started = t0 = time.time()
     try:
         text = backend.caption(s.model, s.prompt, job.path, temperature=s.temperature, max_side=s.max_side)
         if s.single_line:
@@ -400,7 +401,7 @@ def run_jobs(jobs: list[Job], indices: list[int] | None, s: "Settings", force: b
         job = jobs[idx]
         out = job.path.with_suffix(s.extension)
         if not (out.exists() and s.existing == "skip" and not force):
-            job.status = "en cours"
+            job.status, job.duration, job.started = "en cours", 0.0, time.time()
             yield ("row", idx)
         caption_job(job, s, backend, force)
         yield ("row", idx)

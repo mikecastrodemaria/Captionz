@@ -81,8 +81,11 @@ def update_prompt_preview(*_) -> None:
 
 def row_of(idx: int) -> dict:
     j = jobs[idx]
-    return {"id": idx, "file": str(j.path), "name": j.path.name, "status": j.status,
-            "time": f"{j.duration:.1f}s" if j.duration else ""}
+    if j.status == "en cours" and j.started:
+        t = f"{time.time() - j.started:.0f}s…"
+    else:
+        t = f"{j.duration:.1f}s" if j.duration else ""
+    return {"id": idx, "file": str(j.path), "name": j.path.name, "status": j.status, "time": t}
 
 
 def refresh_table(keep_selection: bool = True) -> None:
@@ -334,7 +337,7 @@ def poll_events() -> None:
                 ui.notify("Captioning terminé", type="positive")
     except queue.Empty:
         pass
-    if changed:
+    if changed or (captioner.is_running() and int(time.time() * 5) % 5 == 0):
         refresh_table()
 
 

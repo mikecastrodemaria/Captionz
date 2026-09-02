@@ -395,7 +395,10 @@ class App(tk.Tk):
     def _refresh_row(self, idx: int):
         job = self.jobs[idx]
         tag = {"ok": "ok", "erreur": "err", "ignoré": "skip", "en cours": "run"}.get(job.status, "")
-        dur = f"{job.duration:.1f}s" if job.duration else ""
+        if job.status == "en cours" and job.started:
+            dur = f"{time.time() - job.started:.0f}s…"
+        else:
+            dur = f"{job.duration:.1f}s" if job.duration else ""
         self.tree.item(str(idx), values=(str(job.path), job.status, dur), tags=(tag,))
 
     def _selected_indices(self) -> list[int]:
@@ -674,6 +677,10 @@ class App(tk.Tk):
                     self._on_done()
         except queue.Empty:
             pass
+        if self.captioner.is_running():  # live elapsed time on the running row(s)
+            for i, j in enumerate(self.jobs):
+                if j.status == "en cours":
+                    self._refresh_row(i)
         self.after(100, self._poll_ui_queue)
 
     def _on_done(self):
