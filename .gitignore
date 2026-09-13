@@ -12,3 +12,6 @@ benchmarks/*.log.err
 
 # pasted clipboard images
 pasted/
+
+# llama.cpp binary + GGUF models (downloaded on first use)
+llamacpp/

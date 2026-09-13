@@ -21,9 +21,11 @@ from pathlib import Path
 from nicegui import run, ui
 
 from captionz_core import (
-    APP_TITLE, CAPTION_LENGTHS, CAPTION_TYPES, DEFAULT_OLLAMA_URL, EXTRA_OPTIONS, IMAGE_EXTS,
-    Captioner, Job, OllamaClient, Settings, collect_images, save_pasted_image,
+    APP_TITLE, BACKEND_LABELS, BACKENDS, CAPTION_LENGTHS, CAPTION_TYPES, DEFAULT_OLLAMA_URL, EXTRA_OPTIONS,
+    IMAGE_EXTS, Captioner, Job, OllamaClient, Settings, active_model, collect_images, save_pasted_image,
 )
+from captionz_llamacpp import DEFAULT_DIR as LC_DIR, DEFAULT_MODEL as LC_DEFAULT, KNOWN_MODELS as LC_KNOWN, \
+    ModelRegistry, ServerBinary
 
 try:
     from PIL import Image
@@ -37,6 +39,12 @@ settings = Settings.load()
 jobs: list[Job] = []
 captioner = Captioner()
 W: dict[str, object] = {}   # widgets
+MODELS_BY_BACKEND: dict[str, str] = {"ollama": settings.model, "llamacpp": settings.llamacpp_model,
+                                     "hf": settings.hf_model}
+
+
+def lc_registry() -> ModelRegistry:
+    return ModelRegistry(Path(settings.llamacpp_dir) if settings.llamacpp_dir else LC_DIR)
 
 
 # --------------------------------------------------------------------------- #
@@ -48,8 +56,13 @@ def log(msg: str) -> None:
 
 def collect_settings() -> Settings:
     s = Settings(
+        backend=W["backend"].value,
         ollama_url=(W["url"].value or "").strip() or DEFAULT_OLLAMA_URL,
-        model=W["model"].value or "",
+        model=MODELS_BY_BACKEND.get("ollama", ""),
+        llamacpp_model=MODELS_BY_BACKEND.get("llamacpp", ""),
+        hf_model=MODELS_BY_BACKEND.get("hf", ""),
+        llamacpp_dir=settings.llamacpp_dir,
+        llamacpp_build=settings.llamacpp_build,
         caption_type=W["type"].value,
         caption_length=W["length"].value,
         options=[o for o, cb in W["opts"] if cb.value],
@@ -160,26 +173,115 @@ def add_paths(paths: list[Path]) -> None:
 # --------------------------------------------------------------------------- #
 # Actions
 # --------------------------------------------------------------------------- #
+def on_backend_change() -> None:
+    b = W["backend"].value
+    W["url"].visible = b == "ollama"
+    W["btn_models"].visible = b == "llamacpp"
+    W["model"].options = [MODELS_BY_BACKEND.get(b)] if MODELS_BY_BACKEND.get(b) else []
+    W["model"].value = MODELS_BY_BACKEND.get(b) or None
+    W["model"].update()
+
+
+def on_model_change() -> None:
+    if W["model"].value:
+        MODELS_BY_BACKEND[W["backend"].value] = W["model"].value
+
+
 async def refresh_models() -> None:
+    b = W["backend"].value
     url = (W["url"].value or "").strip() or DEFAULT_OLLAMA_URL
-    W["conn"].text = "connexion…"
+    W["conn"].text = "…"
     try:
-        models = await run.io_bound(OllamaClient(url, timeout=15).list_vision_models, settings.vision_blocklist)
+        if b == "ollama":
+            models = await run.io_bound(OllamaClient(url, timeout=15).list_vision_models, settings.vision_blocklist)
+        elif b == "llamacpp":
+            models = lc_registry().list() or [LC_DEFAULT["name"]]
+        else:
+            from captionz_hf import HF_MODELS
+            models = list(HF_MODELS)
     except Exception as e:  # noqa: BLE001
-        W["conn"].text = "✖ hors ligne"
+        W["conn"].text = "✖ hors ligne" if b == "ollama" else "✖ erreur"
         W["model"].options = []
         W["model"].update()
-        log(f"Impossible de joindre Ollama : {e}")
+        log(f"{'Impossible de joindre Ollama' if b == 'ollama' else 'Erreur'} : {e}")
         return
     W["model"].options = models
     if models:
         if W["model"].value not in models:
             W["model"].value = models[0]
-        W["conn"].text = f"✔ {len(models)} modèle(s) vision"
+        MODELS_BY_BACKEND[b] = W["model"].value
+        if b == "llamacpp":
+            have = lc_registry().list()
+            W["conn"].text = f"✔ {len(have)} modèle(s) local(aux)" if have else "modèle par défaut téléchargé au 1er lancement (≈ 2,9 Go)"
+        else:
+            W["conn"].text = f"✔ {len(models)} modèle(s) vision"
     else:
         W["conn"].text = "aucun modèle vision"
-        log("Aucun modèle vision trouvé. Exemple : ollama pull qwen3-vl:8b")
+        if b == "ollama":
+            log("Aucun modèle vision trouvé. Exemple : ollama pull qwen3-vl:8b")
     W["model"].update()
+
+
+def open_model_manager() -> None:
+    reg = lc_registry()
+    binary = ServerBinary(reg.models_dir.parent, settings.llamacpp_build)
+    with ui.dialog() as dlg, ui.card().classes("w-[760px]"):
+        ui.label("Modèles llama.cpp (sans Ollama)").classes("text-lg font-semibold")
+        ui.label(f"Dossier : {reg.models_dir}").classes("text-sm opacity-70")
+        table = ui.table(columns=[{"name": "name", "label": "Modèle", "field": "name", "align": "left"},
+                                  {"name": "source", "label": "Source", "field": "source", "align": "left"},
+                                  {"name": "origin", "label": "Origine", "field": "origin", "align": "left"}],
+                         rows=[], row_key="name", selection="single").classes("w-full").props("dense")
+
+        def fill():
+            table.rows = [{"name": m, "source": reg.info(m).get("source", "?"),
+                           "origin": reg.info(m).get("repo") or reg.info(m).get("ollama_name") or ""} for m in reg.list()]
+            table.update()
+            cur = binary.current()
+            srv.text = f"llama-server : {cur['tag'] + ' ' + cur['build'] if cur else 'non installé (auto au 1er lancement)'}"
+
+        async def act(label, fn):
+            log(f"▶ {label}…")
+            try:
+                await run.io_bound(fn, log)
+                log(f"✔ {label} terminé")
+            except Exception as e:  # noqa: BLE001
+                log(f"✖ {label} : {e}")
+            fill()
+            await refresh_models()
+
+        with ui.row().classes("w-full items-end gap-2"):
+            known = ui.select(list(LC_KNOWN), value=LC_DEFAULT["name"], label="Télécharger (Hugging Face)").classes("w-80")
+            ui.button("Télécharger", icon="download", on_click=lambda: act(f"téléchargement {known.value}",
+                                                                          lambda lg: reg.add_known(known.value, lg)))
+        with ui.row().classes("w-full items-end gap-2"):
+            try:
+                oll = reg.ollama_vision_models()
+            except Exception:
+                oll = []
+            sel_oll = ui.select(oll, value=oll[0] if oll else None, label="Importer depuis Ollama").classes("w-96")
+            ui.button("Importer", icon="input", on_click=lambda: sel_oll.value and act(
+                f"import {sel_oll.value}", lambda lg: reg.import_from_ollama(sel_oll.value, None, lg)))
+        with ui.row().classes("w-full items-center gap-2"):
+            def selected():
+                return table.selected[0]["name"] if table.selected else ""
+            def use():
+                if selected():
+                    MODELS_BY_BACKEND["llamacpp"] = selected()
+                    W["model"].value = selected()
+                    W["model"].update()
+                    dlg.close()
+            ui.button("Utiliser", icon="check", on_click=use)
+            ui.button("Mettre à jour", icon="sync", on_click=lambda: selected() and act(
+                f"mise à jour {selected()}", lambda lg: reg.update_from_source(selected(), lg))).props("flat")
+            ui.button("Supprimer", icon="delete", on_click=lambda: selected() and (reg.remove(selected()), fill())).props("flat")
+            ui.space()
+            srv = ui.label("").classes("text-sm")
+            ui.button("Mettre à jour llama-server", icon="system_update_alt",
+                      on_click=lambda: act("mise à jour llama-server", lambda lg: binary.update(lg))).props("flat")
+        ui.label("Les téléchargements et imports s'affichent dans le journal.").classes("text-xs opacity-70")
+        fill()
+    dlg.open()
 
 
 def add_path_from_input() -> None:
@@ -268,7 +370,7 @@ def start(indices: list[int] | None, force: bool = False) -> None:
     if captioner.is_running():
         return
     s = collect_settings()
-    if not s.model:
+    if not active_model(s) and s.backend == "ollama":
         ui.notify("Sélectionne un modèle vision.", type="warning")
         return
     if not jobs:
@@ -284,7 +386,7 @@ def start(indices: list[int] | None, force: bool = False) -> None:
     W["progress"].value = 0
     W["progress_label"].text = "0%"
     W["status"].text = "démarrage…"
-    log(f"Démarrage : {len(indices)} image(s) avec « {s.model} »"
+    log(f"Démarrage : {len(indices)} image(s) · {BACKEND_LABELS[s.backend]} · « {active_model(s) or 'défaut'} »"
         f"{'' if Image else ' (Pillow absent : images envoyées brutes)'}.")
     captioner.start(jobs, indices, s, force)
 
@@ -327,7 +429,9 @@ def poll_events() -> None:
                     W["capfile"].text = j.path.with_suffix(settings.extension).name + " (existe)"
             elif ev[0] == "phase":
                 if ev[2] == "chargement":
-                    log(f"Chargement du modèle « {settings.model} »…")
+                    log(f"Chargement du modèle « {active_model(settings) or 'défaut'} »…")
+            elif ev[0] == "log":
+                log(ev[1])
             elif ev[0] == "done":
                 ok = sum(j.status == "ok" for j in jobs)
                 err = sum(j.status == "erreur" for j in jobs)
@@ -390,12 +494,18 @@ def build() -> None:
         # ================= left column =================
         with ui.column().classes("w-3/5 gap-3"):
             with ui.card().classes("w-full"):
-                ui.label("Ollama").classes("text-lg font-semibold")
+                ui.label("Moteur").classes("text-lg font-semibold")
                 with ui.row().classes("w-full items-end gap-2"):
-                    W["url"] = ui.input("URL", value=s.ollama_url).classes("w-56")
-                    W["model"] = ui.select([s.model] if s.model else [], value=s.model or None,
-                                           label="Modèle vision").classes("flex-grow")
+                    W["backend"] = ui.select({b: BACKEND_LABELS[b] for b in BACKENDS}, value=s.backend,
+                                             label="Backend", on_change=lambda e: (on_backend_change(), refresh_models())).classes("w-52")
+                    W["url"] = ui.input("URL Ollama", value=s.ollama_url).classes("w-52")
+                    m0 = active_model(s)
+                    W["model"] = ui.select([m0] if m0 else [], value=m0 or None, label="Modèle",
+                                           on_change=lambda e: on_model_change()).classes("flex-grow")
                     ui.button(icon="refresh", on_click=refresh_models).props("flat round")
+                    W["btn_models"] = ui.button("Modèles llama.cpp…", icon="folder", on_click=open_model_manager).props("flat")
+                W["url"].visible = s.backend == "ollama"
+                W["btn_models"].visible = s.backend == "llamacpp"
 
             with ui.card().classes("w-full"):
                 ui.label("Sources").classes("text-lg font-semibold")

@@ -25,8 +25,8 @@ import time
 from pathlib import Path
 
 from captionz_core import (
-    BACKENDS, CAPTION_LENGTHS, CAPTION_TYPES, EXTRA_OPTIONS, Job, Settings, collect_images, make_backend,
-    run_jobs,
+    BACKENDS, CAPTION_LENGTHS, CAPTION_TYPES, EXTRA_OPTIONS, Job, Settings, active_model, collect_images,
+    make_backend, run_jobs,
 )
 
 
@@ -37,10 +37,11 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--no-recursive", dest="recursive", action="store_false")
 
     b = ap.add_argument_group("backend")
-    b.add_argument("--backend", choices=BACKENDS, help="ollama (default) or hf (transformers)")
+    b.add_argument("--backend", choices=BACKENDS, help="ollama (default), llamacpp (bundled llama-server, no Ollama) or hf (transformers)")
     b.add_argument("--url", help="Ollama URL (default http://localhost:11434)")
     b.add_argument("-m", "--model", help="Ollama model name")
     b.add_argument("--hf-model", help="transformers model id (backend hf)")
+    b.add_argument("--lc-model", help="local llama.cpp model name (backend llamacpp, see captionz_models.py list)")
     b.add_argument("--keep-alive", help="Ollama keep_alive, e.g. 10m or 0")
     b.add_argument("--cpu", action="store_true", default=None, help="Ollama: force CPU (num_gpu=0)")
     b.add_argument("--temperature", type=float)
@@ -88,6 +89,8 @@ def settings_from_args(a: argparse.Namespace) -> Settings:
         s.model = a.model
     if a.hf_model:
         s.hf_model = a.hf_model
+    if a.lc_model:
+        s.llamacpp_model = a.lc_model
     if a.keep_alive is not None:
         s.keep_alive = a.keep_alive
     if a.cpu is not None:
@@ -183,7 +186,7 @@ def main(argv: list[str] | None = None) -> int:
         if not models:
             sys.exit("no vision model installed (e.g. ollama pull qwen3-vl:8b)")
         s.model = models[0]
-    model_label = s.model if s.backend == "ollama" else (s.hf_model or "default")
+    model_label = active_model(s) or "default"
     if not a.quiet:
         print(f"{len(images)} image(s) · backend {s.backend} · model {model_label}")
         print(f"prompt: {s.prompt}\n")
@@ -192,7 +195,8 @@ def main(argv: list[str] | None = None) -> int:
     stop = threading.Event()
     t0 = time.time()
     try:
-        for ev in run_jobs(jobs, None, s, stop_event=stop, backend=backend):
+        for ev in run_jobs(jobs, None, s, stop_event=stop, backend=backend,
+                           log=None if a.quiet else lambda m: print("  " + m)):
             if ev[0] == "row":
                 job = jobs[ev[1]]
                 if job.status == "en cours":

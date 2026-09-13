@@ -1,6 +1,6 @@
 # Captionz
 
-Batch image captioning with a **vision** model served by [Ollama](https://ollama.com). One core, four front ends: a command line, a Tkinter desktop app (standard library only), a NiceGUI web UI (`--ui web`), and a Gradio app made for Hugging Face Spaces.
+Batch image captioning with local **vision** models: through [Ollama](https://ollama.com), or **without Ollama** through a bundled llama.cpp server and GGUF models (Qwen2.5-VL-3B by default, downloaded on first use). One core, four front ends: a command line, a Tkinter desktop app (standard library only), a NiceGUI web UI (`--ui web`), and a Gradio app made for Hugging Face Spaces.
 
 The Ollama layer reuses proven patterns from crispz-studio (`cz_ollama.py`): vision detection through `/api/show` with a name-based fallback, JPEG downscaling before upload, stripping of `<think>` blocks from "thinking" models, `keep_alive` / CPU mode so the model does not hog VRAM.
 
@@ -60,11 +60,39 @@ The web UI (`webui.py`) needs `pip install nicegui` (done by the install scripts
 
 Web UI sources: a local path (file or folder) typed in the page, browser upload (files are copied to `pasted/uploads`), or Ctrl+V of a screenshot / copied image anywhere in the page.
 
+## Running without Ollama (llama.cpp backend)
+
+Pick **llama.cpp (sans Ollama)** as backend in any UI, or `--backend llamacpp` in the CLI. On first use Captionz downloads
+a prebuilt `llama-server` from the llama.cpp releases (CUDA 12.4/13.x or Vulkan on Windows, Vulkan/CPU on Linux, Metal on
+macOS; ~150–500 MB) and the default model **Qwen2.5-VL-3B-Instruct Q4_K_M** with its vision projector (~2.9 GB), then
+starts the server on a free local port. Everything lives in `llamacpp/` next to the app (`llamacpp_dir` in `settings.json`).
+
+Model management, from the "Modèles llama.cpp…" dialog in the UIs or from the command line:
+
+```bash
+python captionz_models.py list                                   # local models + server build
+python captionz_models.py download                               # default model
+python captionz_models.py download Qwen2.5-VL-7B-Instruct-Q4_K_M
+python captionz_models.py add my-model --repo ORG/REPO --model FILE.gguf --mmproj MMPROJ.gguf
+python captionz_models.py ollama                                 # Ollama models that can be imported
+python captionz_models.py import "nutboy02/Agents-A1-4B-Kimi-heretic:latest" --name kimi-4b
+python captionz_models.py update [NAME]                          # re-download HF models whose files changed
+python captionz_models.py server --update                        # newest llama.cpp release
+python captionz_models.py test kimi-4b photo.jpg
+```
+
+**Import from Ollama** reuses the GGUF and vision projector already in `~/.ollama/models` (hard link when on the same
+drive, copy otherwise) and keeps the model's Ollama system prompt and sampling parameters, so it behaves the same.
+Only models with a vision projector are listed. Force a llama.cpp flavour with `llamacpp_build` in `settings.json`
+(e.g. `win-vulkan-x64`) or point `CAPTIONZ_LLAMA_SERVER` to your own binary.
+
 ## Architecture
 
 | File | Role |
 |---|---|
 | `captionz_core.py` | Everything UI-independent: Ollama client, prompt composition, settings, caption policy (skip / overwrite / append, prefix, suffix), `run_jobs()` batch generator, backend abstraction |
+| `captionz_llamacpp.py` | llama.cpp backend: llama-server download, GGUF model registry (Hugging Face / Ollama import), server process |
+| `captionz_models.py` | CLI to manage llama.cpp models and the server binary |
 | `captionz_hf.py` | `transformers` backend (Qwen2.5-VL and friends), ZeroGPU-aware, used on Spaces |
 | `cli.py` | Command line on top of the core |
 | `app.py` | Tkinter desktop UI + entry point (`--ui tk|web`) |

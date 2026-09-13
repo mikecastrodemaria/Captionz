@@ -40,9 +40,11 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 from captionz_core import (  # noqa: F401  (re-exported for bench.py and older imports)
-    APP_TITLE, CAPTION_LENGTHS, CAPTION_TYPES, DEFAULT_OLLAMA_URL, DEFAULT_PROMPT, EXTRA_OPTIONS,
-    IMAGE_EXTS, Captioner, Job, OllamaClient, Settings, build_prompt, collect_images, save_pasted_image,
+    APP_TITLE, BACKEND_LABELS, BACKENDS, CAPTION_LENGTHS, CAPTION_TYPES, DEFAULT_OLLAMA_URL, DEFAULT_PROMPT,
+    EXTRA_OPTIONS, IMAGE_EXTS, Captioner, Job, OllamaClient, Settings, active_model, build_prompt, collect_images,
+    make_backend, save_pasted_image,
 )
+from captionz_llamacpp import DEFAULT_MODEL as LC_DEFAULT, KNOWN_MODELS as LC_KNOWN, ModelRegistry, ServerBinary
 
 try:
     from PIL import Image, ImageGrab, ImageTk  # optional: preview, downscaling, paste
@@ -122,19 +124,30 @@ class App(tk.Tk):
         paned.add(right, weight=2)
 
         # ================= left column: settings =================
-        top = ttk.LabelFrame(left, text="Ollama")
+        top = ttk.LabelFrame(left, text="Moteur")
         top.pack(fill="x", **pad)
-        ttk.Label(top, text="URL :").grid(row=0, column=0, sticky="w", **pad)
+        self.var_backend_label = tk.StringVar(value=BACKEND_LABELS.get(s.backend, BACKEND_LABELS["ollama"]))
+        cbb = ttk.Combobox(top, textvariable=self.var_backend_label, state="readonly", width=22,
+                           values=[BACKEND_LABELS[b] for b in BACKENDS])
+        cbb.grid(row=0, column=0, sticky="w", **pad)
+        cbb.bind("<<ComboboxSelected>>", lambda e: self._on_backend_change())
+        self.lbl_url = ttk.Label(top, text="URL :")
+        self.lbl_url.grid(row=0, column=1, sticky="w", **pad)
         self.var_url = tk.StringVar(value=s.ollama_url)
-        ttk.Entry(top, textvariable=self.var_url, width=28).grid(row=0, column=1, sticky="w", **pad)
-        ttk.Label(top, text="Modèle vision :").grid(row=0, column=2, sticky="w", **pad)
-        self.var_model = tk.StringVar(value=s.model)
-        self.cmb_model = ttk.Combobox(top, textvariable=self.var_model, state="readonly", width=44)
-        self.cmb_model.grid(row=0, column=3, sticky="we", **pad)
-        ttk.Button(top, text="↻", width=3, command=self.refresh_models).grid(row=0, column=4, **pad)
+        self.ent_url = ttk.Entry(top, textvariable=self.var_url, width=24)
+        self.ent_url.grid(row=0, column=2, sticky="w", **pad)
+        ttk.Label(top, text="Modèle :").grid(row=0, column=3, sticky="w", **pad)
+        self.var_model = tk.StringVar(value=active_model(s))
+        self.cmb_model = ttk.Combobox(top, textvariable=self.var_model, state="readonly", width=40)
+        self.cmb_model.grid(row=0, column=4, sticky="we", **pad)
+        ttk.Button(top, text="↻", width=3, command=self.refresh_models).grid(row=0, column=5, **pad)
+        self.btn_models = ttk.Button(top, text="Modèles llama.cpp…", command=self.open_model_manager)
+        self.btn_models.grid(row=0, column=6, **pad)
         self.lbl_conn = ttk.Label(top, text="…")
-        self.lbl_conn.grid(row=0, column=5, sticky="w", **pad)
-        top.columnconfigure(3, weight=1)
+        self.lbl_conn.grid(row=0, column=7, sticky="w", **pad)
+        top.columnconfigure(4, weight=1)
+        self._models_by_backend: dict[str, str] = {"ollama": s.model, "llamacpp": s.llamacpp_model, "hf": s.hf_model}
+        self._on_backend_change(initial=True)
 
         # --- sources ---
         src = ttk.LabelFrame(left, text="Sources")
@@ -375,8 +388,13 @@ class App(tk.Tk):
 
     def _collect_settings(self) -> Settings:
         return Settings(
+            backend=self.backend,
             ollama_url=self.var_url.get().strip() or DEFAULT_OLLAMA_URL,
-            model=self.var_model.get().strip(),
+            model=self._models_by_backend.get("ollama", ""),
+            llamacpp_model=self._models_by_backend.get("llamacpp", ""),
+            hf_model=self._models_by_backend.get("hf", ""),
+            llamacpp_dir=self.settings.llamacpp_dir,
+            llamacpp_build=self.settings.llamacpp_build,
             caption_type=self.var_type.get(),
             caption_length=self.var_length.get(),
             options=[o for o, v in self.opt_vars if v.get()],
@@ -476,34 +494,143 @@ class App(tk.Tk):
         self.lbl_caption_file.configure(text=out.name + " (existe)")
         self._log(f"💾 {out.name} enregistré.")
 
-    # ---- models ---------------------------------------------------------- #
+    # ---- backend / models ------------------------------------------------ #
+    @property
+    def backend(self) -> str:
+        label = self.var_backend_label.get()
+        return next((b for b, l in BACKEND_LABELS.items() if l == label), "ollama")
+
+    def _on_backend_change(self, initial: bool = False):
+        b = self.backend
+        state = "normal" if b == "ollama" else "disabled"
+        self.ent_url.configure(state=state)
+        self.btn_models.configure(state="normal" if b == "llamacpp" else "disabled")
+        self.var_model.set(self._models_by_backend.get(b, ""))
+        self.cmb_model.bind("<<ComboboxSelected>>", lambda e: self._models_by_backend.__setitem__(self.backend, self.var_model.get()))
+        if not initial:
+            self.refresh_models()
+
+    def _lc_registry(self) -> ModelRegistry:
+        from captionz_llamacpp import DEFAULT_DIR
+        return ModelRegistry(Path(self.settings.llamacpp_dir) if self.settings.llamacpp_dir else DEFAULT_DIR)
+
     def refresh_models(self):
+        b = self.backend
         url = self.var_url.get().strip() or DEFAULT_OLLAMA_URL
-        self.lbl_conn.configure(text="connexion…")
+        self.lbl_conn.configure(text="…")
 
         def work():
             try:
-                models = OllamaClient(url, timeout=15).list_vision_models(self.settings.vision_blocklist)
-                self.ui_queue.put(("models", models, None))
+                if b == "ollama":
+                    models = OllamaClient(url, timeout=15).list_vision_models(self.settings.vision_blocklist)
+                elif b == "llamacpp":
+                    models = self._lc_registry().list() or [LC_DEFAULT["name"]]
+                else:
+                    from captionz_hf import HF_MODELS
+                    models = list(HF_MODELS)
+                self.ui_queue.put(("models", (b, models), None))
             except Exception as e:  # noqa: BLE001
-                self.ui_queue.put(("models", [], str(e)))
+                self.ui_queue.put(("models", (b, []), str(e)))
 
         threading.Thread(target=work, daemon=True).start()
 
-    def _apply_models(self, models: list[str], error: str | None):
+    def _apply_models(self, payload, error: str | None):
+        b, models = payload
+        if b != self.backend:
+            return
         if error:
-            self.lbl_conn.configure(text="✖ hors ligne")
-            self._log(f"Impossible de joindre Ollama : {error}")
+            self.lbl_conn.configure(text="✖ hors ligne" if b == "ollama" else "✖ erreur")
+            self._log(f"{'Impossible de joindre Ollama' if b == 'ollama' else 'Erreur'} : {error}")
             self.cmb_model["values"] = []
             return
         self.cmb_model["values"] = models
         if models:
-            self.lbl_conn.configure(text=f"✔ {len(models)} modèle(s) vision")
             if self.var_model.get() not in models:
                 self.var_model.set(models[0])
+            self._models_by_backend[b] = self.var_model.get()
+            if b == "llamacpp":
+                have = self._lc_registry().list()
+                self.lbl_conn.configure(text=f"✔ {len(have)} modèle(s) local(aux)" if have
+                                        else "modèle par défaut téléchargé au 1er lancement (≈ 2,9 Go)")
+            else:
+                self.lbl_conn.configure(text=f"✔ {len(models)} modèle(s) vision")
         else:
             self.lbl_conn.configure(text="aucun modèle vision")
-            self._log("Aucun modèle vision trouvé. Exemple : `ollama pull qwen3-vl:8b`.")
+            if b == "ollama":
+                self._log("Aucun modèle vision trouvé. Exemple : `ollama pull qwen3-vl:8b`.")
+
+    # ---- llama.cpp model manager ----------------------------------------- #
+    def open_model_manager(self):
+        reg = self._lc_registry()
+        win = tk.Toplevel(self)
+        win.title("Modèles llama.cpp (sans Ollama)")
+        win.geometry("720x460")
+        win.transient(self)
+        pad = {"padx": 6, "pady": 4}
+        ttk.Label(win, text=f"Dossier : {reg.models_dir}").pack(anchor="w", **pad)
+        lb = tk.Listbox(win, height=8)
+        lb.pack(fill="both", expand=True, padx=6)
+        t = getattr(self, "_theme", THEMES["light"])
+        lb.configure(bg=t["field"], fg=t["fg"], selectbackground=t["sel"])
+
+        def fill():
+            lb.delete(0, "end")
+            for m in reg.list():
+                info = reg.info(m)
+                lb.insert("end", f"{m}   [{info.get('source', '?')}]  {info.get('repo') or info.get('ollama_name') or ''}")
+            self.refresh_models()
+
+        def run(label, fn):
+            def worker():
+                self.ui_queue.put(("log", f"▶ {label}…"))
+                try:
+                    fn(lambda m: self.ui_queue.put(("log", m)))
+                    self.ui_queue.put(("log", f"✔ {label} terminé"))
+                except Exception as e:  # noqa: BLE001
+                    self.ui_queue.put(("log", f"✖ {label} : {e}"))
+                self.after(0, fill)
+            threading.Thread(target=worker, daemon=True).start()
+
+        row1 = ttk.Frame(win); row1.pack(fill="x", **pad)
+        ttk.Label(row1, text="Télécharger (Hugging Face) :").pack(side="left")
+        var_known = tk.StringVar(value=LC_DEFAULT["name"])
+        ttk.Combobox(row1, textvariable=var_known, state="readonly", width=34, values=list(LC_KNOWN)).pack(side="left", padx=4)
+        ttk.Button(row1, text="Télécharger", command=lambda: run(
+            f"téléchargement {var_known.get()}", lambda log: reg.add_known(var_known.get(), log))).pack(side="left")
+
+        row2 = ttk.Frame(win); row2.pack(fill="x", **pad)
+        ttk.Label(row2, text="Importer depuis Ollama :").pack(side="left")
+        var_oll = tk.StringVar()
+        cmb_oll = ttk.Combobox(row2, textvariable=var_oll, state="readonly", width=44)
+        cmb_oll.pack(side="left", padx=4)
+        try:
+            cmb_oll["values"] = reg.ollama_vision_models()
+            if cmb_oll["values"]:
+                var_oll.set(cmb_oll["values"][0])
+        except Exception:
+            pass
+        ttk.Button(row2, text="Importer", command=lambda: var_oll.get() and run(
+            f"import {var_oll.get()}", lambda log: reg.import_from_ollama(var_oll.get(), None, log))).pack(side="left")
+
+        row3 = ttk.Frame(win); row3.pack(fill="x", **pad)
+        def selected():
+            sel = lb.curselection()
+            return lb.get(sel[0]).split("   ")[0] if sel else ""
+        ttk.Button(row3, text="Utiliser", command=lambda: (self._models_by_backend.__setitem__("llamacpp", selected()),
+                                                            self.var_model.set(selected()))).pack(side="left")
+        ttk.Button(row3, text="Mettre à jour (Hugging Face)", command=lambda: selected() and run(
+            f"mise à jour {selected()}", lambda log: reg.update_from_source(selected(), log))).pack(side="left", padx=4)
+        ttk.Button(row3, text="Supprimer", command=lambda: selected() and messagebox.askyesno(
+            APP_TITLE, f"Supprimer {selected()} ?") and (reg.remove(selected()), fill())).pack(side="left", padx=4)
+        ttk.Separator(row3, orient="vertical").pack(side="left", fill="y", padx=8)
+        binary = ServerBinary(reg.models_dir.parent, self.settings.llamacpp_build)
+        cur = binary.current()
+        ttk.Label(row3, text=f"llama-server : {cur['tag'] + ' ' + cur['build'] if cur else 'non installé (auto au 1er lancement)'}").pack(side="left")
+        ttk.Button(row3, text="Mettre à jour llama-server", command=lambda: run(
+            "mise à jour llama-server", lambda log: binary.update(log))).pack(side="left", padx=4)
+        ttk.Label(win, text="Les téléchargements et imports s'affichent dans le journal de la fenêtre principale.",
+                  foreground=t["muted"]).pack(anchor="w", **pad)
+        fill()
 
     # ---- sources --------------------------------------------------------- #
     def _add_paths(self, paths: list[Path]):
@@ -634,7 +761,7 @@ class App(tk.Tk):
         if self.captioner.is_running():
             return
         s = self._collect_settings()
-        if not s.model:
+        if not active_model(s) and s.backend == "ollama":
             messagebox.showwarning(APP_TITLE, "Sélectionne un modèle vision.")
             return
         if not self.jobs:
@@ -650,7 +777,7 @@ class App(tk.Tk):
         self.progress.configure(value=0)
         self.lbl_progress.configure(text="0%")
         self.lbl_status.configure(text="démarrage…")
-        self._log(f"Démarrage : {len(indices)} image(s) avec « {s.model} »"
+        self._log(f"Démarrage : {len(indices)} image(s) · {BACKEND_LABELS[s.backend]} · « {active_model(s) or 'défaut'} »"
                   f"{'' if Image else ' (Pillow absent : images envoyées brutes)'}.")
         self.captioner.start(self.jobs, indices, s, force)
 
@@ -684,9 +811,18 @@ class App(tk.Tk):
                             text=job.path.with_suffix(self.settings.extension).name + " (existe)")
                 elif ev[0] == "phase":
                     if ev[2] == "chargement":
-                        self._log(f"Chargement du modèle « {self.settings.model} »…")
+                        self._log(f"Chargement du modèle « {active_model(self.settings) or 'défaut'} »…")
+                elif ev[0] == "log":
+                    self._log(ev[1])
                 elif ev[0] == "done":
                     self._on_done()
+        except queue.Empty:
+            pass
+        try:
+            while True:
+                kind, a, b = self.ui_queue.get_nowait()
+                if kind == "log":
+                    self._log(a)
         except queue.Empty:
             pass
         if self.captioner.is_running():  # live status: phase, timer, %, ETA

@@ -25,9 +25,11 @@ from pathlib import Path
 import gradio as gr
 
 from captionz_core import (
-    BACKENDS, CAPTION_LENGTHS, CAPTION_TYPES, DEFAULT_OLLAMA_URL, EXTRA_OPTIONS, IMAGE_EXTS, BatchProgress, Job,
-    Settings, build_prompt, make_backend, run_jobs, save_pasted_image,
+    BACKEND_LABELS, BACKENDS, CAPTION_LENGTHS, CAPTION_TYPES, DEFAULT_OLLAMA_URL, EXTRA_OPTIONS, IMAGE_EXTS,
+    BatchProgress, Job, Settings, build_prompt, make_backend, run_jobs, save_pasted_image,
 )
+from captionz_llamacpp import DEFAULT_DIR as LC_DIR, DEFAULT_MODEL as LC_DEFAULT, KNOWN_MODELS as LC_KNOWN, \
+    ModelRegistry, ServerBinary
 
 ON_SPACES = bool(os.environ.get("SPACE_ID"))
 DEFAULT_BACKEND = os.environ.get("CAPTIONZ_BACKEND", "hf" if ON_SPACES else "ollama")
@@ -39,9 +41,11 @@ _backend_cache: dict[str, object] = {}
 # Glue (thin): settings from widgets, backend cache, file handling
 # --------------------------------------------------------------------------- #
 def settings_from_ui(backend, url, model, hf_model, ctype, length, options, name, custom,
-                     prefix, suffix, single, temperature, max_side, max_tokens=1024, no_think=True) -> Settings:
+                     prefix, suffix, single, temperature, max_side, max_tokens=1024, no_think=True,
+                     lc_model="") -> Settings:
     s = Settings.load()
     s.backend, s.ollama_url, s.model, s.hf_model = backend, url or DEFAULT_OLLAMA_URL, model or "", hf_model or ""
+    s.llamacpp_model = lc_model or ""
     s.caption_type, s.caption_length, s.options = ctype, length, list(options or [])
     s.name, s.custom_prompt = name or "", custom or ""
     s.prefix, s.suffix, s.single_line = prefix or "", suffix or "", bool(single)
@@ -52,24 +56,54 @@ def settings_from_ui(backend, url, model, hf_model, ctype, length, options, name
 
 
 def get_backend(s: Settings):
-    key = f"{s.backend}|{s.ollama_url}|{s.hf_model}|{s.max_tokens}|{s.no_think}"
+    key = f"{s.backend}|{s.ollama_url}|{s.hf_model}|{s.llamacpp_model}|{s.max_tokens}|{s.no_think}"
     if key not in _backend_cache:
         _backend_cache.clear()
         _backend_cache[key] = make_backend(s)
     return _backend_cache[key]
 
 
-def list_models(backend, url, hf_model):
+def lc_registry() -> ModelRegistry:
     s = Settings.load()
-    s.backend, s.ollama_url, s.hf_model = backend, url or DEFAULT_OLLAMA_URL, hf_model or ""
+    return ModelRegistry(Path(s.llamacpp_dir) if s.llamacpp_dir else LC_DIR)
+
+
+def list_models(backend, url, hf_model, lc_model):
+    s = Settings.load()
+    s.backend, s.ollama_url, s.hf_model, s.llamacpp_model = backend, url or DEFAULT_OLLAMA_URL, hf_model or "", lc_model or ""
     try:
         models = get_backend(s).list_models()
         status = f"✔ {len(models)} modèle(s)"
+        if backend == "llamacpp" and not lc_registry().list():
+            status = "modèle par défaut téléchargé au 1er lancement (≈ 2,9 Go)"
     except Exception as e:  # noqa: BLE001
         models, status = [], f"✖ {e}"
-    if backend == "ollama":
-        return gr.update(choices=models, value=models[0] if models else None), gr.update(), status
-    return gr.update(), gr.update(choices=models, value=models[0] if models else None), status
+    upd = gr.update(choices=models, value=models[0] if models else None)
+    return (upd if backend == "ollama" else gr.update(), upd if backend == "hf" else gr.update(),
+            upd if backend == "llamacpp" else gr.update(), status)
+
+
+def lc_action(kind, arg, progress=gr.Progress()):
+    """Model management for the llama.cpp backend (runs in the request thread)."""
+    reg = lc_registry()
+    lines = []
+    def lg(m):
+        lines.append(m)
+        progress(0, desc=m)
+    try:
+        if kind == "download":
+            reg.add_known(arg or LC_DEFAULT["name"], lg)
+        elif kind == "import":
+            if not arg:
+                raise ValueError("choisis un modèle Ollama")
+            reg.import_from_ollama(arg, None, lg)
+        elif kind == "update-server":
+            ServerBinary(reg.models_dir.parent, Settings.load().llamacpp_build).update(lg)
+        lines.append("✔ terminé")
+    except Exception as e:  # noqa: BLE001
+        lines.append(f"✖ {e}")
+    models = reg.list() or [LC_DEFAULT["name"]]
+    return gr.update(choices=models, value=models[0]), "\n".join(lines[-12:])
 
 
 def preview_prompt(ctype, length, options, name, custom):
@@ -133,13 +167,13 @@ def make_zip(items) -> str | None:
 
 
 def run_all(items, backend, url, model, hf_model, ctype, length, options, name, custom,
-            prefix, suffix, single, temperature, max_side, max_tokens, no_think, progress=gr.Progress()):
+            prefix, suffix, single, temperature, max_side, max_tokens, no_think, lc_model, progress=gr.Progress()):
     items = list(items or [])
     if not items:
         yield items, *render(items), None, "Ajoute d'abord des images."
         return
     s = settings_from_ui(backend, url, model, hf_model, ctype, length, options, name, custom,
-                         prefix, suffix, single, temperature, max_side, max_tokens, no_think)
+                         prefix, suffix, single, temperature, max_side, max_tokens, no_think, lc_model)
     try:
         be = get_backend(s)
         if s.backend == "ollama" and not s.model:
@@ -147,10 +181,12 @@ def run_all(items, backend, url, model, hf_model, ctype, length, options, name, 
     except Exception as e:  # noqa: BLE001
         yield items, *render(items), None, f"Backend indisponible : {e}"
         return
-    log = [f"Démarrage : {len(items)} image(s), backend {s.backend}, modèle {s.model or s.hf_model or 'défaut'}"]
+    log = [f"Démarrage : {len(items)} image(s), backend {s.backend}, modèle {s.model or s.hf_model or s.llamacpp_model or 'défaut'}"]
     jobs = [Job(Path(it["path"])) for it in items]
     prog = BatchProgress()
-    for ev in run_jobs(jobs, None, s, force=True, backend=be, progress=prog):
+    for ev in run_jobs(jobs, None, s, force=True, backend=be, progress=prog, log=log.append):
+        if ev[0] == "progress":     # ("progress", done, total): nothing to render beyond the bar
+            continue
         idx = ev[1]
         job, it = jobs[idx], items[idx]
         snap = prog.snapshot()
@@ -201,15 +237,32 @@ def build(default_backend: str = DEFAULT_BACKEND) -> gr.Blocks:
             with gr.Column(scale=3):
                 with gr.Group():
                     with gr.Row():
-                        backend = gr.Dropdown(list(BACKENDS), value=default_backend, label="Backend", scale=1)
+                        backend = gr.Dropdown([(BACKEND_LABELS[b], b) for b in BACKENDS], value=default_backend,
+                                              label="Backend", scale=1)
                         url = gr.Textbox(value=s0.ollama_url, label="Ollama URL", scale=2,
                                          visible=default_backend == "ollama")
                         model = gr.Dropdown([], value=None, label="Modèle Ollama", scale=3,
                                             visible=default_backend == "ollama", allow_custom_value=True)
                         hf_model = gr.Dropdown([], value=None, label="Modèle transformers", scale=3,
                                                visible=default_backend == "hf", allow_custom_value=True)
+                        lc_model = gr.Dropdown([], value=None, label="Modèle llama.cpp (local)", scale=3,
+                                               visible=default_backend == "llamacpp", allow_custom_value=True)
                         refresh = gr.Button("↻", scale=0, min_width=48)
                     status = gr.Markdown("…")
+                    with gr.Accordion("Modèles llama.cpp (sans Ollama)", open=False, visible=default_backend == "llamacpp") as lc_box:
+                        with gr.Row():
+                            lc_known = gr.Dropdown(list(LC_KNOWN), value=LC_DEFAULT["name"], label="Télécharger (Hugging Face)")
+                            lc_dl = gr.Button("Télécharger")
+                        with gr.Row():
+                            try:
+                                _oll = lc_registry().ollama_vision_models()
+                            except Exception:
+                                _oll = []
+                            lc_oll = gr.Dropdown(_oll, value=_oll[0] if _oll else None, label="Importer depuis Ollama",
+                                                 allow_custom_value=True)
+                            lc_imp = gr.Button("Importer")
+                            lc_srv = gr.Button("Mettre à jour llama-server")
+                        lc_log = gr.Textbox(lines=3, label="Journal modèles", interactive=False)
 
                 with gr.Group():
                     gr.Markdown("**Sources**")
@@ -266,11 +319,15 @@ def build(default_backend: str = DEFAULT_BACKEND) -> gr.Blocks:
         demo.load(preview_prompt, prompt_inputs, final_prompt)
 
         def on_backend(b):
-            return (gr.update(visible=b == "ollama"), gr.update(visible=b == "ollama"), gr.update(visible=b == "hf"))
-        backend.change(on_backend, backend, [url, model, hf_model]) \
-               .then(list_models, [backend, url, hf_model], [model, hf_model, status])
-        refresh.click(list_models, [backend, url, hf_model], [model, hf_model, status])
-        demo.load(list_models, [backend, url, hf_model], [model, hf_model, status])
+            return (gr.update(visible=b == "ollama"), gr.update(visible=b == "ollama"), gr.update(visible=b == "hf"),
+                    gr.update(visible=b == "llamacpp"), gr.update(visible=b == "llamacpp"))
+        backend.change(on_backend, backend, [url, model, hf_model, lc_model, lc_box]) \
+               .then(list_models, [backend, url, hf_model, lc_model], [model, hf_model, lc_model, status])
+        refresh.click(list_models, [backend, url, hf_model, lc_model], [model, hf_model, lc_model, status])
+        demo.load(list_models, [backend, url, hf_model, lc_model], [model, hf_model, lc_model, status])
+        lc_dl.click(lambda k: lc_action("download", k), lc_known, [lc_model, lc_log])
+        lc_imp.click(lambda o: lc_action("import", o), lc_oll, [lc_model, lc_log])
+        lc_srv.click(lambda: lc_action("update-server", ""), None, [lc_model, lc_log])
 
         files.upload(import_files, [files, items], [items, gallery, table, log])
         add_paste.click(import_pasted, [paste, items], [items, gallery, table, log])
@@ -278,7 +335,7 @@ def build(default_backend: str = DEFAULT_BACKEND) -> gr.Blocks:
         gallery.select(on_select, items, [sel_idx, caption_box])
         save.click(save_caption, [items, sel_idx, caption_box], [items, gallery, table, zip_out, log])
         run.click(run_all, [items, backend, url, model, hf_model, ctype, length, options, name, custom,
-                            prefix, suffix, single, temperature, max_side, max_tokens, no_think],
+                            prefix, suffix, single, temperature, max_side, max_tokens, no_think, lc_model],
                   [items, gallery, table, zip_out, log])
     return demo
 

@@ -120,7 +120,7 @@ DEFAULT_PROMPT = build_prompt("Training caption (paragraph)", "long", DEFAULT_OP
 # Clearly multimodal names: fallback when /api/show does not return `capabilities`
 VISION_NAME_HINTS = ("llava", "-vl", "vl:", "moondream", "minicpm-v", "bakllava",
                      "llama3.2-vision", "llama-3.2-vision", "vision")
-_THINK_RE = re.compile(r"<think>[\s\S]*?(?:</think>|$)", re.IGNORECASE)
+_THINK_RE = re.compile(r"<(think|thought)>[\s\S]*?(?:</>|$)", re.IGNORECASE)
 
 
 # --------------------------------------------------------------------------- #
@@ -221,8 +221,9 @@ class OllamaClient:
     def strip_thinking(text: str) -> str:
         """"Thinking" models (Qwen3+, DeepSeek-R1…): the reasoning must never end
         up in the caption. Keep what follows the last </think>."""
-        if "</think>" in text:
-            text = text.rsplit("</think>", 1)[1]
+        for tag in ("</think>", "</thought>"):
+            if tag in text:
+                text = text.rsplit(tag, 1)[1]
         return _THINK_RE.sub("", text).strip().strip('"')
 
     def caption(self, model: str, prompt: str, image_path: Path, temperature: float = 0.2,
@@ -271,6 +272,9 @@ class Settings:
     ollama_url: str = DEFAULT_OLLAMA_URL
     model: str = ""
     hf_model: str = ""              # transformers model id when backend == "hf"
+    llamacpp_model: str = ""        # local GGUF model name when backend == "llamacpp"
+    llamacpp_dir: str = ""          # llama.cpp folder (binary + models), empty = <app>/llamacpp
+    llamacpp_build: str = ""        # force a llama.cpp release flavour, e.g. win-vulkan-x64
     caption_type: str = "Training caption (paragraph)"
     caption_length: str = "long"
     options: list = field(default_factory=lambda: list(DEFAULT_OPTIONS))
@@ -402,16 +406,27 @@ class OllamaBackend(Backend):
                                    max_tokens=self.max_tokens, no_think=self.no_think)
 
 
-BACKENDS = ("ollama", "hf")
+BACKENDS = ("ollama", "llamacpp", "hf")
+BACKEND_LABELS = {"ollama": "Ollama", "llamacpp": "llama.cpp (sans Ollama)", "hf": "transformers (GPU)"}
 
 
 def make_backend(s: "Settings") -> Backend:
-    """Backend chosen by settings: "ollama" (default) or "hf" (transformers,
-    see captionz_hf.py — used on Hugging Face Spaces)."""
+    """Backend chosen by settings: "ollama" (default), "llamacpp" (bundled
+    llama-server + GGUF, no Ollama needed, see captionz_llamacpp.py) or "hf"
+    (transformers, see captionz_hf.py — used on Hugging Face Spaces)."""
     if s.backend == "hf":
         from captionz_hf import HFBackend  # lazy: torch/transformers are heavy and optional
         return HFBackend(s.hf_model or None, max_new_tokens=s.max_tokens or 512)
+    if s.backend == "llamacpp":
+        from captionz_llamacpp import LlamaCppBackend
+        return LlamaCppBackend(s.llamacpp_dir or None, s.llamacpp_model, s.llamacpp_build, s.max_tokens or 1024,
+                               no_think=s.no_think)
     return OllamaBackend(s.ollama_url, s.keep_alive, s.cpu_only, s.vision_blocklist, s.max_tokens, s.no_think)
+
+
+def active_model(s: "Settings") -> str:
+    """Model name relevant to the selected backend."""
+    return {"ollama": s.model, "llamacpp": s.llamacpp_model, "hf": s.hf_model}.get(s.backend, s.model)
 
 
 # --------------------------------------------------------------------------- #
@@ -428,7 +443,7 @@ def caption_job(job: Job, s: "Settings", backend: Backend, force: bool = False) 
     job.status = "en cours"
     job.started = t0 = time.time()
     try:
-        text = backend.caption(s.model, s.prompt, job.path, temperature=s.temperature, max_side=s.max_side)
+        text = backend.caption(active_model(s), s.prompt, job.path, temperature=s.temperature, max_side=s.max_side)
         if s.single_line:
             text = " ".join(text.split())
         text = f"{s.prefix}{text}{s.suffix}".strip()
@@ -501,16 +516,19 @@ class BatchProgress:
 
 def run_jobs(jobs: list[Job], indices: list[int] | None, s: "Settings", force: bool = False,
              stop_event: threading.Event | None = None, backend: Backend | None = None,
-             progress: BatchProgress | None = None):
+             progress: BatchProgress | None = None, log=None):
     """Generator over a batch. Yields ("phase", idx, name) on phase changes
     ("chargement" of the model, "génération"), ("row", idx) when a job starts
     and when it ends, then ("progress", done, total). Stops early when
-    stop_event is set. `progress` (BatchProgress) is kept up to date."""
+    stop_event is set. `progress` (BatchProgress) is kept up to date. `log`
+    (callable) receives backend messages such as download progress."""
     backend = backend or make_backend(s)
+    if log is not None and hasattr(backend, "on_progress"):
+        backend.on_progress = log
     if indices is None:
         indices = list(range(len(jobs)))
     total = len(indices)
-    model = s.model if s.backend == "ollama" else (s.hf_model or "default")
+    model = active_model(s) or "default"
     prog = progress or BatchProgress()
     prog.reset(total, model)
     for n, idx in enumerate(indices, 1):
@@ -528,7 +546,7 @@ def run_jobs(jobs: list[Job], indices: list[int] | None, s: "Settings", force: b
         job.status, job.duration, job.started = "en cours", 0.0, time.time()
         yield ("row", idx)
         try:
-            needs_load = not backend.is_loaded(s.model)
+            needs_load = not backend.is_loaded(model)
         except Exception:
             needs_load = False
         if needs_load:
@@ -536,7 +554,7 @@ def run_jobs(jobs: list[Job], indices: list[int] | None, s: "Settings", force: b
             yield ("phase", idx, "chargement")
             t0 = time.time()
             try:
-                backend.load(s.model)
+                backend.load(model)
             except Exception:
                 pass  # the caption call will surface the real error
             prog.load_seconds += time.time() - t0
@@ -578,7 +596,8 @@ class Captioner:
 
     def _run(self, jobs: list[Job], indices: list[int], s: "Settings", force: bool) -> None:
         try:
-            for ev in run_jobs(jobs, indices, s, force, self.stop_event, progress=self.progress):
+            for ev in run_jobs(jobs, indices, s, force, self.stop_event, progress=self.progress,
+                               log=lambda m: self.events.put(("log", m))):
                 self.events.put(ev)
         except Exception as e:  # noqa: BLE001  (e.g. backend import failure)
             self.progress.finished = True
