@@ -36,6 +36,8 @@ ollama pull qwen3-vl:8b
 
 ## Install and run
 
+**Pinokio**: 1-click launcher at [Captionz.pinokio](https://github.com/mikecastrodemaria/Captionz.pinokio) (install, web UI, Gradio UI, update, reset). Paste the repo URL in Pinokio's Discover page.
+
 The scripts create a `.venv` virtual environment and install Pillow.
 
 | Platform | Install | Desktop UI | Web UI |
