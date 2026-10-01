@@ -199,21 +199,21 @@ def main(argv: list[str] | None = None) -> int:
                            log=None if a.quiet else lambda m: print("  " + m)):
             if ev[0] == "row":
                 job = jobs[ev[1]]
-                if job.status == "en cours":
+                if job.status == "processing":
                     continue
-                if job.status == "erreur":
+                if job.status == "error":
                     print(f"✖ {job.path}: {job.error}", file=sys.stderr)
                 elif not a.quiet:
-                    tag = "·" if job.status == "ignoré" else "✔"
-                    detail = job.error if job.status == "ignoré" else job.caption[:100] + ("…" if len(job.caption) > 100 else "")
+                    tag = "·" if job.status == "skipped" else "✔"
+                    detail = job.error if job.status == "skipped" else job.caption[:100] + ("…" if len(job.caption) > 100 else "")
                     print(f"{tag} {job.path.name} ({job.duration:.1f}s) {detail}")
     except KeyboardInterrupt:
         stop.set()
         print("\ninterrupted", file=sys.stderr)
 
     ok = sum(j.status == "ok" for j in jobs)
-    err = sum(j.status == "erreur" for j in jobs)
-    skip = sum(j.status == "ignoré" for j in jobs)
+    err = sum(j.status == "error" for j in jobs)
+    skip = sum(j.status == "skipped" for j in jobs)
     print(f"\n{ok} ok, {skip} skipped, {err} error(s) in {time.time() - t0:.1f}s")
     if a.json:
         Path(a.json).write_text(json.dumps(

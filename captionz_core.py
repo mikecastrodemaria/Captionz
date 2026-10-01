@@ -248,8 +248,8 @@ class OllamaClient:
         resp = self._request("POST", "/api/chat", payload)
         text = self.strip_thinking((resp.get("message") or {}).get("content", ""))
         if resp.get("done_reason") == "length" and not text:
-            raise RuntimeError(f"limite de {max_tokens} tokens atteinte sans caption (le modèle divague) ; "
-                               f"augmente « tokens max » ou change de modèle")
+            raise RuntimeError(f"Token limit of {max_tokens} reached without a caption; "
+                               "increase the maximum token limit or choose another model.")
         return text
 
 
@@ -259,7 +259,7 @@ class OllamaClient:
 @dataclass
 class Job:
     path: Path
-    status: str = "en attente"
+    status: str = "pending"
     caption: str = ""
     error: str = ""
     duration: float = 0.0
@@ -407,7 +407,7 @@ class OllamaBackend(Backend):
 
 
 BACKENDS = ("ollama", "llamacpp", "hf")
-BACKEND_LABELS = {"ollama": "Ollama", "llamacpp": "llama.cpp (sans Ollama)", "hf": "transformers (GPU)"}
+BACKEND_LABELS = {"ollama": "Ollama", "llamacpp": "llama.cpp (no Ollama)", "hf": "Transformers (GPU)"}
 
 
 def make_backend(s: "Settings") -> Backend:
@@ -435,12 +435,12 @@ def active_model(s: "Settings") -> str:
 def caption_job(job: Job, s: "Settings", backend: Backend, force: bool = False) -> Job:
     """Caption one image and write the text file next to it, honouring the
     skip / overwrite / append policy, prefix/suffix and single-line options.
-    Updates and returns the job (status: ok | ignoré | erreur)."""
+    Updates and returns the job (status: ok | skipped | error)."""
     out = job.path.with_suffix(s.extension)
     if out.exists() and s.existing == "skip" and not force:
-        job.status, job.error = "ignoré", "caption déjà présente"
+        job.status, job.error = "skipped", "Caption already exists."
         return job
-    job.status = "en cours"
+    job.status = "processing"
     job.started = t0 = time.time()
     try:
         text = backend.caption(active_model(s), s.prompt, job.path, temperature=s.temperature, max_side=s.max_side)
@@ -448,7 +448,7 @@ def caption_job(job: Job, s: "Settings", backend: Backend, force: bool = False) 
             text = " ".join(text.split())
         text = f"{s.prefix}{text}{s.suffix}".strip()
         if not text:
-            raise RuntimeError("réponse vide du modèle")
+            raise RuntimeError("The model returned an empty response.")
         if out.exists() and s.existing == "append" and not force:
             old = out.read_text("utf-8").rstrip("\n")
             text = (old + "\n" + text) if old else text
@@ -456,9 +456,9 @@ def caption_job(job: Job, s: "Settings", backend: Backend, force: bool = False) 
         job.caption, job.status, job.error = text, "ok", ""
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", "replace")[:300]
-        job.status, job.error = "erreur", f"HTTP {e.code}: {body}"
+        job.status, job.error = "error", f"HTTP {e.code}: {body}"
     except Exception as e:  # noqa: BLE001
-        job.status, job.error = "erreur", str(e)
+        job.status, job.error = "error", str(e)
     job.duration = time.time() - t0
     return job
 
@@ -494,23 +494,23 @@ class BatchProgress:
         now = time.time()
         elapsed = now - self.phase_started if self.phase_started else 0.0
         avg = sum(self.durations) / len(self.durations) if self.durations else None
-        sub = min(elapsed / avg, 0.95) if (avg and self.phase == "génération") else 0.0
+        sub = min(elapsed / avg, 0.95) if (avg and self.phase == "generation") else 0.0
         fraction = min((self.done + sub) / self.total, 1.0)
         if self.finished:
             total_s = now - self.batch_started
-            label = "Arrêté" if self.stopped else "Terminé"
-            text = f"{label} · {self.done}/{self.total} · {_fmt_secs(total_s)} au total"
+            label = "Stopped" if self.stopped else "Finished"
+            text = f"{label} · {self.done}/{self.total} · {_fmt_secs(total_s)} total"
             if self.load_seconds:
-                text += f" (dont chargement {_fmt_secs(self.load_seconds)})"
+                text += f" (including {_fmt_secs(self.load_seconds)} for loading)"
             return {"text": text, "fraction": fraction if self.stopped else 1.0, "elapsed": total_s}
         parts = [f"{self.done}/{self.total} · {fraction * 100:.0f}%"]
-        if self.phase == "chargement":
-            parts.append(f"chargement du modèle {self.model} · {_fmt_secs(elapsed)}")
+        if self.phase == "loading":
+            parts.append(f"Loading model {self.model} · {_fmt_secs(elapsed)}")
         elif self.phase:
             parts.append(f"{self.phase} · {self.current} · {_fmt_secs(elapsed)}")
-        if avg and self.phase == "génération":
+        if avg and self.phase == "generation":
             remaining = max(avg * (self.total - self.done) - elapsed, 0.0)
-            parts.append(f"reste ~{_fmt_secs(remaining)}")
+            parts.append(f"~{_fmt_secs(remaining)} remaining")
         return {"text": " · ".join(parts), "fraction": fraction, "elapsed": elapsed}
 
 
@@ -518,7 +518,7 @@ def run_jobs(jobs: list[Job], indices: list[int] | None, s: "Settings", force: b
              stop_event: threading.Event | None = None, backend: Backend | None = None,
              progress: BatchProgress | None = None, log=None):
     """Generator over a batch. Yields ("phase", idx, name) on phase changes
-    ("chargement" of the model, "génération"), ("row", idx) when a job starts
+    ("loading" the model, "generation"), ("row", idx) when a job starts
     and when it ends, then ("progress", done, total). Stops early when
     stop_event is set. `progress` (BatchProgress) is kept up to date. `log`
     (callable) receives backend messages such as download progress."""
@@ -543,15 +543,15 @@ def run_jobs(jobs: list[Job], indices: list[int] | None, s: "Settings", force: b
             yield ("row", idx)
             yield ("progress", n, total)
             continue
-        job.status, job.duration, job.started = "en cours", 0.0, time.time()
+        job.status, job.duration, job.started = "processing", 0.0, time.time()
         yield ("row", idx)
         try:
             needs_load = not backend.is_loaded(model)
         except Exception:
             needs_load = False
         if needs_load:
-            prog.set_phase("chargement", job.path.name)
-            yield ("phase", idx, "chargement")
+            prog.set_phase("loading", job.path.name)
+            yield ("phase", idx, "loading")
             t0 = time.time()
             try:
                 backend.load(model)
@@ -559,8 +559,8 @@ def run_jobs(jobs: list[Job], indices: list[int] | None, s: "Settings", force: b
                 pass  # the caption call will surface the real error
             prog.load_seconds += time.time() - t0
             job.started = time.time()
-        prog.set_phase("génération", job.path.name)
-        yield ("phase", idx, "génération")
+        prog.set_phase("generation", job.path.name)
+        yield ("phase", idx, "generation")
         caption_job(job, s, backend, force)
         if job.status == "ok":
             prog.durations.append(job.duration)
@@ -602,7 +602,7 @@ class Captioner:
         except Exception as e:  # noqa: BLE001  (e.g. backend import failure)
             self.progress.finished = True
             for idx in indices:
-                if jobs[idx].status in ("en attente", "en cours"):
-                    jobs[idx].status, jobs[idx].error = "erreur", str(e)
+                if jobs[idx].status in ("pending", "processing"):
+                    jobs[idx].status, jobs[idx].error = "error", str(e)
                     self.events.put(("row", idx))
         self.events.put(("done",))

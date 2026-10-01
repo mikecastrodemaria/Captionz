@@ -32,7 +32,7 @@ try:
 except ImportError:  # pragma: no cover
     Image = None
 
-STATUS_COLOR = {"ok": "text-green-7", "erreur": "text-red-7", "ignoré": "text-amber-8", "en cours": "text-blue-7"}
+STATUS_COLOR = {"ok": "text-green-7", "error": "text-red-7", "skipped": "text-amber-8", "processing": "text-blue-7"}
 
 # ---- module state (single user) -------------------------------------------- #
 settings = Settings.load()
@@ -96,7 +96,7 @@ def update_prompt_preview(*_) -> None:
 
 def row_of(idx: int) -> dict:
     j = jobs[idx]
-    if j.status == "en cours" and j.started:
+    if j.status == "processing" and j.started:
         t = f"{time.time() - j.started:.0f}s…"
     else:
         t = f"{j.duration:.1f}s" if j.duration else ""
@@ -151,7 +151,7 @@ def show_selected() -> None:
         except Exception:
             text = ""
     W["caption"].value = text
-    W["capfile"].text = cap.name + (" (existe)" if cap.exists() else "")
+    W["capfile"].text = cap.name + (" (exists)" if cap.exists() else "")
 
 
 def add_paths(paths: list[Path]) -> None:
@@ -163,7 +163,7 @@ def add_paths(paths: list[Path]) -> None:
             jobs.append(Job(img))
             added += 1
     refresh_table()
-    log(f"{added} image(s) ajoutée(s) ({len(images) - added} doublon(s) ignoré(s)).")
+    log(f"{added} image(s) added ({len(images) - added} duplicate(s) skipped).")
     if added:
         W["table"].selected = [W["table"].rows[-1]]
         W["table"].update()
@@ -200,10 +200,10 @@ async def refresh_models() -> None:
             from captionz_hf import HF_MODELS
             models = list(HF_MODELS)
     except Exception as e:  # noqa: BLE001
-        W["conn"].text = "✖ hors ligne" if b == "ollama" else "✖ erreur"
+        W["conn"].text = "✖ offline" if b == "ollama" else "✖ error"
         W["model"].options = []
         W["model"].update()
-        log(f"{'Impossible de joindre Ollama' if b == 'ollama' else 'Erreur'} : {e}")
+        log(f"{'Could not connect to Ollama' if b == 'ollama' else 'Error'}: {e}")
         return
     W["model"].options = models
     if models:
@@ -212,13 +212,13 @@ async def refresh_models() -> None:
         MODELS_BY_BACKEND[b] = W["model"].value
         if b == "llamacpp":
             have = lc_registry().list()
-            W["conn"].text = f"✔ {len(have)} modèle(s) local(aux)" if have else "modèle par défaut téléchargé au 1er lancement (≈ 2,9 Go)"
+            W["conn"].text = f"✔ {len(have)} local model(s)" if have else "Default model will be downloaded on first launch (about 2.9 GB)"
         else:
-            W["conn"].text = f"✔ {len(models)} modèle(s) vision"
+            W["conn"].text = f"✔ {len(models)} vision model(s)"
     else:
-        W["conn"].text = "aucun modèle vision"
+        W["conn"].text = "No vision models found"
         if b == "ollama":
-            log("Aucun modèle vision trouvé. Exemple : ollama pull qwen3-vl:8b")
+            log("No vision models found. Example: ollama pull qwen3-vl:8b")
     W["model"].update()
 
 
@@ -226,11 +226,11 @@ def open_model_manager() -> None:
     reg = lc_registry()
     binary = ServerBinary(reg.models_dir.parent, settings.llamacpp_build)
     with ui.dialog() as dlg, ui.card().classes("w-[760px]"):
-        ui.label("Modèles llama.cpp (sans Ollama)").classes("text-lg font-semibold")
-        ui.label(f"Dossier : {reg.models_dir}").classes("text-sm opacity-70")
-        table = ui.table(columns=[{"name": "name", "label": "Modèle", "field": "name", "align": "left"},
+        ui.label("llama.cpp models (no Ollama)").classes("text-lg font-semibold")
+        ui.label(f"Folder: {reg.models_dir}").classes("text-sm opacity-70")
+        table = ui.table(columns=[{"name": "name", "label": "Model", "field": "name", "align": "left"},
                                   {"name": "source", "label": "Source", "field": "source", "align": "left"},
-                                  {"name": "origin", "label": "Origine", "field": "origin", "align": "left"}],
+                                  {"name": "origin", "label": "Origin", "field": "origin", "align": "left"}],
                          rows=[], row_key="name", selection="single").classes("w-full").props("dense")
 
         def fill():
@@ -238,30 +238,30 @@ def open_model_manager() -> None:
                            "origin": reg.info(m).get("repo") or reg.info(m).get("ollama_name") or ""} for m in reg.list()]
             table.update()
             cur = binary.current()
-            srv.text = f"llama-server : {cur['tag'] + ' ' + cur['build'] if cur else 'non installé (auto au 1er lancement)'}"
+            srv.text = f"llama-server: {cur['tag'] + ' ' + cur['build'] if cur else 'not installed (automatic on first launch)'}"
 
         async def act(label, fn):
             log(f"▶ {label}…")
             try:
                 await run.io_bound(fn, log)
-                log(f"✔ {label} terminé")
+                log(f"✔ {label} finished")
             except Exception as e:  # noqa: BLE001
                 log(f"✖ {label} : {e}")
             fill()
             await refresh_models()
 
         with ui.row().classes("w-full items-end gap-2"):
-            known = ui.select(list(LC_KNOWN), value=LC_DEFAULT["name"], label="Télécharger (Hugging Face)").classes("w-80")
-            ui.button("Télécharger", icon="download", on_click=lambda: act(f"téléchargement {known.value}",
+            known = ui.select(list(LC_KNOWN), value=LC_DEFAULT["name"], label="Download from Hugging Face").classes("w-80")
+            ui.button("Download", icon="download", on_click=lambda: act(f"Downloading {known.value}",
                                                                           lambda lg: reg.add_known(known.value, lg)))
         with ui.row().classes("w-full items-end gap-2"):
             try:
                 oll = reg.ollama_vision_models()
             except Exception:
                 oll = []
-            sel_oll = ui.select(oll, value=oll[0] if oll else None, label="Importer depuis Ollama").classes("w-96")
-            ui.button("Importer", icon="input", on_click=lambda: sel_oll.value and act(
-                f"import {sel_oll.value}", lambda lg: reg.import_from_ollama(sel_oll.value, None, lg)))
+            sel_oll = ui.select(oll, value=oll[0] if oll else None, label="Import from Ollama").classes("w-96")
+            ui.button("Import", icon="input", on_click=lambda: sel_oll.value and act(
+                f"Importing {sel_oll.value}", lambda lg: reg.import_from_ollama(sel_oll.value, None, lg)))
         with ui.row().classes("w-full items-center gap-2"):
             def selected():
                 return table.selected[0]["name"] if table.selected else ""
@@ -271,15 +271,15 @@ def open_model_manager() -> None:
                     W["model"].value = selected()
                     W["model"].update()
                     dlg.close()
-            ui.button("Utiliser", icon="check", on_click=use)
-            ui.button("Mettre à jour", icon="sync", on_click=lambda: selected() and act(
-                f"mise à jour {selected()}", lambda lg: reg.update_from_source(selected(), lg))).props("flat")
-            ui.button("Supprimer", icon="delete", on_click=lambda: selected() and (reg.remove(selected()), fill())).props("flat")
+            ui.button("Use", icon="check", on_click=use)
+            ui.button("Update", icon="sync", on_click=lambda: selected() and act(
+                f"Updating {selected()}", lambda lg: reg.update_from_source(selected(), lg))).props("flat")
+            ui.button("Remove", icon="delete", on_click=lambda: selected() and (reg.remove(selected()), fill())).props("flat")
             ui.space()
             srv = ui.label("").classes("text-sm")
-            ui.button("Mettre à jour llama-server", icon="system_update_alt",
-                      on_click=lambda: act("mise à jour llama-server", lambda lg: binary.update(lg))).props("flat")
-        ui.label("Les téléchargements et imports s'affichent dans le journal.").classes("text-xs opacity-70")
+            ui.button("Update llama-server", icon="system_update_alt",
+                      on_click=lambda: act("Updating llama-server", lambda lg: binary.update(lg))).props("flat")
+        ui.label("Downloads and imports appear in the log.").classes("text-xs opacity-70")
         fill()
     dlg.open()
 
@@ -287,11 +287,11 @@ def open_model_manager() -> None:
 def add_path_from_input() -> None:
     raw = (W["path"].value or "").strip().strip('"')
     if not raw:
-        ui.notify("Indique un chemin de fichier ou de dossier.", type="warning")
+        ui.notify("Enter a file or folder path.", type="warning")
         return
     p = Path(raw)
     if not p.exists():
-        ui.notify(f"Introuvable : {p}", type="negative")
+        ui.notify(f"Not found: {p}", type="negative")
         return
     add_paths([p])
     W["path"].value = ""
@@ -311,7 +311,7 @@ async def on_upload(e) -> None:
     if out.suffix.lower() in IMAGE_EXTS:
         add_paths([out])
     else:
-        log(f"Ignoré (pas une image) : {name}")
+        log(f"Skipped (not an image): {name}")
 
 
 def on_paste(e) -> None:
@@ -319,12 +319,12 @@ def on_paste(e) -> None:
     args = e.args if isinstance(e.args, dict) else (e.args[0] if e.args else {})
     data_url = args.get("data", "")
     if not data_url.startswith("data:image") or Image is None:
-        log("Aucune image dans le presse-papiers.")
+        log("No image found in the clipboard.")
         return
     raw = base64.b64decode(data_url.split(",", 1)[1])
     img = Image.open(io.BytesIO(raw))
     out = save_pasted_image(img, settings.paste_path)
-    log(f"Image collée enregistrée : {out}")
+    log(f"Pasted image saved: {out}")
     add_paths([out])
 
 
@@ -350,19 +350,19 @@ def clear_jobs() -> None:
 def save_caption() -> None:
     idx = current_index()
     if idx is None:
-        ui.notify("Sélectionne une image dans la liste.", type="warning")
+        ui.notify("Select an image from the list.", type="warning")
         return
     j = jobs[idx]
     text = (W["caption"].value or "").strip()
     out = j.path.with_suffix(collect_settings().extension)
     out.write_text(text + "\n", encoding="utf-8")
     j.caption = text
-    if j.status != "erreur":
+    if j.status != "error":
         j.status = "ok"
     refresh_table()
-    W["capfile"].text = out.name + " (existe)"
-    log(f"💾 {out.name} enregistré.")
-    ui.notify("Caption enregistrée", type="positive")
+    W["capfile"].text = out.name + " (exists)"
+    log(f"💾 Saved {out.name}.")
+    ui.notify("Caption saved.", type="positive")
 
 
 def start(indices: list[int] | None, force: bool = False) -> None:
@@ -371,10 +371,10 @@ def start(indices: list[int] | None, force: bool = False) -> None:
         return
     s = collect_settings()
     if not active_model(s) and s.backend == "ollama":
-        ui.notify("Sélectionne un modèle vision.", type="warning")
+        ui.notify("Select a vision model.", type="warning")
         return
     if not jobs:
-        ui.notify("Ajoute au moins une image ou un dossier.", type="warning")
+        ui.notify("Add at least one image or folder.", type="warning")
         return
     if indices is None:
         indices = list(range(len(jobs)))
@@ -385,16 +385,16 @@ def start(indices: list[int] | None, force: bool = False) -> None:
     W["btn_stop"].enable()
     W["progress"].value = 0
     W["progress_label"].text = "0%"
-    W["status"].text = "démarrage…"
-    log(f"Démarrage : {len(indices)} image(s) · {BACKEND_LABELS[s.backend]} · « {active_model(s) or 'défaut'} »"
-        f"{'' if Image else ' (Pillow absent : images envoyées brutes)'}.")
+    W["status"].text = "Starting…"
+    log(f"Starting: {len(indices)} image(s) · {BACKEND_LABELS[s.backend]} · “{active_model(s) or 'default'}”"
+        f"{'' if Image else ' (Pillow unavailable: sending original images)'}.")
     captioner.start(jobs, indices, s, force)
 
 
 def start_selected() -> None:
     sel = selected_indices()
     if not sel:
-        ui.notify("Sélectionne une ou plusieurs images.", type="warning")
+        ui.notify("Select one or more images.", type="warning")
         return
     start(sel)
 
@@ -402,7 +402,7 @@ def start_selected() -> None:
 def start_current() -> None:
     idx = current_index()
     if idx is None:
-        ui.notify("Sélectionne une image dans la liste.", type="warning")
+        ui.notify("Select an image from the list.", type="warning")
         return
     start([idx], force=True)
 
@@ -410,7 +410,7 @@ def start_current() -> None:
 def stop() -> None:
     if captioner.is_running():
         captioner.stop()
-        log("Arrêt demandé, fin de l'image en cours…")
+        log("Stop requested; waiting for the current image to finish…")
 
 
 def poll_events() -> None:
@@ -422,26 +422,26 @@ def poll_events() -> None:
                 idx = ev[1]
                 changed = True
                 j = jobs[idx]
-                if j.status == "erreur":
-                    log(f"✖ {j.path.name} : {j.error}")
+                if j.status == "error":
+                    log(f"✖ {j.path.name}: {j.error}")
                 elif j.status == "ok" and idx == current_index():
                     W["caption"].value = j.caption
-                    W["capfile"].text = j.path.with_suffix(settings.extension).name + " (existe)"
+                    W["capfile"].text = j.path.with_suffix(settings.extension).name + " (exists)"
             elif ev[0] == "phase":
-                if ev[2] == "chargement":
-                    log(f"Chargement du modèle « {active_model(settings) or 'défaut'} »…")
+                if ev[2] == "loading":
+                    log(f"Loading model “{active_model(settings) or 'default'}”…")
             elif ev[0] == "log":
                 log(ev[1])
             elif ev[0] == "done":
                 ok = sum(j.status == "ok" for j in jobs)
-                err = sum(j.status == "erreur" for j in jobs)
-                skip = sum(j.status == "ignoré" for j in jobs)
-                log(f"{'Arrêté' if captioner.stop_event.is_set() else 'Terminé'} : "
-                    f"{ok} ok, {skip} ignoré(s), {err} erreur(s).")
+                err = sum(j.status == "error" for j in jobs)
+                skip = sum(j.status == "skipped" for j in jobs)
+                log(f"{'Stopped' if captioner.stop_event.is_set() else 'Finished'}: "
+                    f"{ok} successful, {skip} skipped, {err} error(s).")
                 W["btn_all"].enable()
                 W["btn_sel"].enable()
                 W["btn_stop"].disable()
-                ui.notify("Captioning terminé", type="positive")
+                ui.notify("Captioning finished.", type="positive")
     except queue.Empty:
         pass
     snap = captioner.progress.snapshot()
@@ -488,96 +488,96 @@ def build() -> None:
         ui.label("Captionz").classes("text-xl font-bold")
         with ui.row().classes("items-center gap-4"):
             W["conn"] = ui.label("…").classes("text-sm opacity-80")
-            ui.switch("Mode sombre").bind_value(W["dark"], "value")
+            ui.switch("Dark mode").bind_value(W["dark"], "value")
 
     with ui.row().classes("w-full no-wrap gap-4 p-4 items-start"):
         # ================= left column =================
         with ui.column().classes("w-3/5 gap-3"):
             with ui.card().classes("w-full"):
-                ui.label("Moteur").classes("text-lg font-semibold")
+                ui.label("Backend").classes("text-lg font-semibold")
                 with ui.row().classes("w-full items-end gap-2"):
                     W["backend"] = ui.select({b: BACKEND_LABELS[b] for b in BACKENDS}, value=s.backend,
                                              label="Backend", on_change=lambda e: (on_backend_change(), refresh_models())).classes("w-52")
-                    W["url"] = ui.input("URL Ollama", value=s.ollama_url).classes("w-52")
+                    W["url"] = ui.input("Ollama URL", value=s.ollama_url).classes("w-52")
                     m0 = active_model(s)
                     W["model"] = ui.select([m0] if m0 else [], value=m0 or None, label="Modèle",
                                            on_change=lambda e: on_model_change()).classes("flex-grow")
                     ui.button(icon="refresh", on_click=refresh_models).props("flat round")
-                    W["btn_models"] = ui.button("Modèles llama.cpp…", icon="folder", on_click=open_model_manager).props("flat")
+                    W["btn_models"] = ui.button("llama.cpp models…", icon="folder", on_click=open_model_manager).props("flat")
                 W["url"].visible = s.backend == "ollama"
                 W["btn_models"].visible = s.backend == "llamacpp"
 
             with ui.card().classes("w-full"):
-                ui.label("Sources").classes("text-lg font-semibold")
+                ui.label("Images").classes("text-lg font-semibold")
                 with ui.row().classes("w-full items-end gap-2"):
-                    W["path"] = ui.input("Chemin d'un fichier ou d'un dossier (sur cette machine)") \
+                    W["path"] = ui.input("Path to a file or folder (on this machine)") \
                         .classes("flex-grow").on("keydown.enter", add_path_from_input)
-                    W["recursive"] = ui.checkbox("récursif", value=s.recursive)
-                    ui.button("Ajouter", icon="add", on_click=add_path_from_input)
+                    W["recursive"] = ui.checkbox("Recursive", value=s.recursive)
+                    ui.button("Add", icon="add", on_click=add_path_from_input)
                 with ui.row().classes("w-full items-center gap-2"):
-                    W["upload"] = ui.upload(label="Envoyer des images (copiées dans pasted/uploads)", multiple=True,
+                    W["upload"] = ui.upload(label="Upload images (copied to pasted/uploads)", multiple=True,
                                             auto_upload=True, on_upload=on_upload) \
                         .props('accept="image/*"').classes("flex-grow")
                 with ui.row().classes("w-full items-center gap-2"):
-                    ui.label("📋 Ctrl+V n'importe où dans la page pour coller une capture d'écran ou une image copiée.") \
+                    ui.label("📋 Press Ctrl+V anywhere on the page to paste a screenshot or copied image.") \
                         .classes("text-sm opacity-70")
                     ui.space()
-                    ui.button("Retirer sélection", icon="remove", on_click=remove_selected).props("flat")
-                    ui.button("Vider", icon="delete", on_click=clear_jobs).props("flat")
+                    ui.button("Remove selected", icon="remove", on_click=remove_selected).props("flat")
+                    ui.button("Clear", icon="delete", on_click=clear_jobs).props("flat")
                     W["count"] = ui.label("0 image").classes("text-sm")
 
             with ui.card().classes("w-full"):
                 ui.label("Prompt").classes("text-lg font-semibold")
                 with ui.row().classes("w-full gap-2"):
-                    W["type"] = ui.select(list(CAPTION_TYPES), value=s.caption_type, label="Type de caption",
+                    W["type"] = ui.select(list(CAPTION_TYPES), value=s.caption_type, label="Caption type",
                                           on_change=update_prompt_preview).classes("flex-grow")
-                    W["length"] = ui.select(list(CAPTION_LENGTHS), value=s.caption_length, label="Longueur",
+                    W["length"] = ui.select(list(CAPTION_LENGTHS), value=s.caption_length, label="Length",
                                             on_change=update_prompt_preview).classes("w-44")
-                with ui.expansion("Options supplémentaires", icon="tune").classes("w-full"):
+                with ui.expansion("Additional options", icon="tune").classes("w-full"):
                     W["opts"] = []
                     for opt in EXTRA_OPTIONS:
                         cb = ui.checkbox(opt, value=opt in s.options, on_change=update_prompt_preview).classes("text-sm")
                         W["opts"].append((opt, cb))
                 with ui.row().classes("w-full items-end gap-2"):
-                    W["name"] = ui.input("Nom du personnage ({name})", value=s.name,
+                    W["name"] = ui.input("Character name ({name})", value=s.name,
                                          on_change=update_prompt_preview).classes("w-72")
-                    ui.label("vide = « the main character »").classes("text-sm opacity-70")
-                W["custom"] = ui.textarea("Prompt personnalisé (remplace type / longueur / options si rempli)",
+                    ui.label("blank = “the main character”").classes("text-sm opacity-70")
+                W["custom"] = ui.textarea("Custom prompt (overrides type, length, and options when provided)",
                                           value=s.custom_prompt, on_change=update_prompt_preview).classes("w-full").props("rows=2")
-                W["preview"] = ui.textarea("Prompt final envoyé au modèle").classes("w-full").props("readonly rows=3 outlined")
+                W["preview"] = ui.textarea("Final prompt sent to the model").classes("w-full").props("readonly rows=3 outlined")
 
             with ui.card().classes("w-full"):
-                ui.label("Sortie").classes("text-lg font-semibold")
+                ui.label("Output").classes("text-lg font-semibold")
                 with ui.row().classes("w-full items-end gap-2"):
-                    W["prefix"] = ui.input("Préfixe (trigger)", value=s.prefix).classes("w-48")
-                    W["suffix"] = ui.input("Suffixe", value=s.suffix).classes("w-48")
+                    W["prefix"] = ui.input("Prefix (trigger)", value=s.prefix).classes("w-48")
+                    W["suffix"] = ui.input("Suffix", value=s.suffix).classes("w-48")
                     W["ext"] = ui.input("Extension", value=s.extension).classes("w-24")
-                    W["single"] = ui.checkbox("Une seule ligne", value=s.single_line)
+                    W["single"] = ui.checkbox("Single line", value=s.single_line)
                 with ui.row().classes("w-full items-center gap-2"):
-                    ui.label("Captions existantes :")
-                    W["existing"] = ui.radio({"skip": "ignorer", "overwrite": "écraser", "append": "ajouter à la suite"},
+                    ui.label("Existing captions:")
+                    W["existing"] = ui.radio({"skip": "Skip", "overwrite": "Overwrite", "append": "Append"},
                                              value=s.existing).props("inline")
 
             with ui.card().classes("w-full"):
-                ui.label("Modèle").classes("text-lg font-semibold")
+                ui.label("Model").classes("text-lg font-semibold")
                 with ui.row().classes("w-full items-end gap-2"):
-                    W["temp"] = ui.number("Température", value=s.temperature, min=0, max=1.5, step=0.1).classes("w-32")
-                    W["keep"] = ui.input("keep_alive (0 = décharger)", value=str(s.keep_alive)).classes("w-44")
-                    W["maxside"] = ui.number("Côté max px (0 = brut)", value=s.max_side, min=0, max=4096, step=128).classes("w-44")
-                    W["cpu"] = ui.checkbox("Forcer CPU", value=s.cpu_only)
-                    W["maxtok"] = ui.number("Tokens max (0 = illimité)", value=s.max_tokens, min=0, max=8192, step=256) \
-                        .classes("w-44").tooltip("Borne la génération : un modèle qui divague est coupé au lieu de bloquer")
-                    W["nothink"] = ui.checkbox("Désactiver le thinking", value=s.no_think) \
-                        .tooltip("Modèles thinking (Qwen3, DeepSeek-R1…) : envoie think=false, le raisonnement ne fait que brûler des tokens")
+                    W["temp"] = ui.number("Temperature", value=s.temperature, min=0, max=1.5, step=0.1).classes("w-32")
+                    W["keep"] = ui.input("keep_alive (0 = unload)", value=str(s.keep_alive)).classes("w-44")
+                    W["maxside"] = ui.number("Maximum image side in px (0 = original)", value=s.max_side, min=0, max=4096, step=128).classes("w-44")
+                    W["cpu"] = ui.checkbox("Force CPU", value=s.cpu_only)
+                    W["maxtok"] = ui.number("Maximum tokens (0 = unlimited)", value=s.max_tokens, min=0, max=8192, step=256) \
+                        .classes("w-44").tooltip("Limits generation to prevent rambling models from hanging")
+                    W["nothink"] = ui.checkbox("Disable reasoning", value=s.no_think) \
+                        .tooltip("For reasoning models (Qwen3, DeepSeek-R1, etc.): sends think=false to avoid wasting tokens")
                     if Image is None:
                         W["maxside"].disable()
                         ui.label("(pip install pillow)").classes("text-sm opacity-70")
 
             with ui.card().classes("w-full"):
                 with ui.row().classes("w-full items-center gap-2"):
-                    W["btn_all"] = ui.button("Captionner tout", icon="play_arrow", on_click=lambda: start(None))
-                    W["btn_sel"] = ui.button("Captionner la sélection", icon="playlist_play", on_click=start_selected)
-                    W["btn_stop"] = ui.button("Arrêter", icon="stop", color="negative", on_click=stop)
+                    W["btn_all"] = ui.button("Caption all", icon="play_arrow", on_click=lambda: start(None))
+                    W["btn_sel"] = ui.button("Caption selected", icon="playlist_play", on_click=start_selected)
+                    W["btn_stop"] = ui.button("Stop", icon="stop", color="negative", on_click=stop)
                     W["btn_stop"].disable()
                     W["progress"] = ui.linear_progress(value=0, show_value=False).classes("flex-grow")
                     W["progress_label"] = ui.label("")
@@ -589,31 +589,31 @@ def build() -> None:
             with ui.card().classes("w-full"):
                 ui.label("Images").classes("text-lg font-semibold")
                 columns = [
-                    {"name": "name", "label": "Fichier", "field": "name", "align": "left", "sortable": True},
-                    {"name": "status", "label": "Statut", "field": "status", "align": "center"},
-                    {"name": "time", "label": "Durée", "field": "time", "align": "center"},
+                    {"name": "name", "label": "File", "field": "name", "align": "left", "sortable": True},
+                    {"name": "status", "label": "Status", "field": "status", "align": "center"},
+                    {"name": "time", "label": "Duration", "field": "time", "align": "center"},
                 ]
                 W["table"] = ui.table(columns=columns, rows=[], row_key="id", selection="multiple",
                                       pagination=0, on_select=lambda e: show_selected()).classes("w-full").props("dense")
                 W["table"].add_slot("body-cell-status", """
                     <q-td :props="props">
-                      <span :class="{'text-green-7': props.value==='ok', 'text-red-7': props.value==='erreur',
-                                     'text-amber-8': props.value==='ignoré', 'text-blue-7': props.value==='en cours'}">
+                      <span :class="{'text-green-7': props.value==='ok', 'text-red-7': props.value==='error',
+                                     'text-amber-8': props.value==='skipped', 'text-blue-7': props.value==='processing'}">
                         {{ props.value }}
                       </span>
                     </q-td>""")
                 W["table"].style("max-height: 320px")
 
             with ui.card().classes("w-full"):
-                ui.label("Aperçu").classes("text-lg font-semibold")
+                ui.label("Preview").classes("text-lg font-semibold")
                 W["image"] = ui.image("").classes("w-full").style("max-height: 420px; object-fit: contain")
 
             with ui.card().classes("w-full"):
-                ui.label("Caption (éditable)").classes("text-lg font-semibold")
+                ui.label("Caption (editable)").classes("text-lg font-semibold")
                 W["caption"] = ui.textarea("").classes("w-full").props("rows=7 outlined")
                 with ui.row().classes("w-full items-center gap-2"):
-                    ui.button("Captionner cette image", icon="play_arrow", on_click=start_current)
-                    ui.button("Enregistrer la caption", icon="save", on_click=save_caption)
+                    ui.button("Caption this image", icon="play_arrow", on_click=start_current)
+                    ui.button("Save caption", icon="save", on_click=save_caption)
                     W["capfile"] = ui.label("").classes("text-sm opacity-70")
 
     update_prompt_preview()

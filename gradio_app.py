@@ -7,9 +7,9 @@ Presentation layer only: every decision (prompt composition, backend, caption
 policy, files) lives in captionz_core.py / captionz_hf.py. On Spaces the
 backend defaults to "hf" (transformers, ZeroGPU); locally to "ollama".
 
-Sources: upload (files or a folder), or paste an image into the paste box.
-Uploaded files are copied to a work folder; captions are written next to them
-and offered as a zip.
+Sources: upload files or a folder, or paste an image into the paste box.
+Uploaded files are copied to a work folder; captions are saved alongside them
+and can be downloaded as a ZIP archive.
 """
 
 from __future__ import annotations
@@ -73,9 +73,9 @@ def list_models(backend, url, hf_model, lc_model):
     s.backend, s.ollama_url, s.hf_model, s.llamacpp_model = backend, url or DEFAULT_OLLAMA_URL, hf_model or "", lc_model or ""
     try:
         models = get_backend(s).list_models()
-        status = f"✔ {len(models)} modèle(s)"
+        status = f"✔ {len(models)} model(s)"
         if backend == "llamacpp" and not lc_registry().list():
-            status = "modèle par défaut téléchargé au 1er lancement (≈ 2,9 Go)"
+            status = "The default model will be downloaded on first launch (about 2.9 GB)."
     except Exception as e:  # noqa: BLE001
         models, status = [], f"✖ {e}"
     upd = gr.update(choices=models, value=models[0] if models else None)
@@ -95,11 +95,11 @@ def lc_action(kind, arg, progress=gr.Progress()):
             reg.add_known(arg or LC_DEFAULT["name"], lg)
         elif kind == "import":
             if not arg:
-                raise ValueError("choisis un modèle Ollama")
+                raise ValueError("Select an Ollama model.")
             reg.import_from_ollama(arg, None, lg)
         elif kind == "update-server":
             ServerBinary(reg.models_dir.parent, Settings.load().llamacpp_build).update(lg)
-        lines.append("✔ terminé")
+        lines.append("✔ Finished")
     except Exception as e:  # noqa: BLE001
         lines.append(f"✖ {e}")
     models = reg.list() or [LC_DEFAULT["name"]]
@@ -128,22 +128,22 @@ def import_files(files, items):
         if str(dst) in known:
             continue
         shutil.copy(src, dst)
-        items.append({"path": str(dst), "caption": "", "status": "en attente", "seconds": 0.0})
+        items.append({"path": str(dst), "caption": "", "status": "pending", "seconds": 0.0})
         added += 1
-    return items, *render(items), f"{added} image(s) ajoutée(s)"
+    return items, *render(items), f"{added} image(s) added"
 
 
 def import_pasted(img, items):
     if img is None:
-        return items, *render(items), "Aucune image collée"
+        return items, *render(items), "No image pasted."
     items = list(items or [])
     out = save_pasted_image(img, WORK_DIR)
-    items.append({"path": str(out), "caption": "", "status": "en attente", "seconds": 0.0})
-    return items, *render(items), f"Image collée : {out.name}"
+    items.append({"path": str(out), "caption": "", "status": "pending", "seconds": 0.0})
+    return items, *render(items), f"Pasted image: {out.name}"
 
 
 def clear_items():
-    return [], *render([]), "Liste vidée"
+    return [], *render([]), "List cleared"
 
 
 def render(items):
@@ -170,7 +170,7 @@ def run_all(items, backend, url, model, hf_model, ctype, length, options, name, 
             prefix, suffix, single, temperature, max_side, max_tokens, no_think, lc_model, progress=gr.Progress()):
     items = list(items or [])
     if not items:
-        yield items, *render(items), None, "Ajoute d'abord des images."
+        yield items, *render(items), None, "Add images first."
         return
     s = settings_from_ui(backend, url, model, hf_model, ctype, length, options, name, custom,
                          prefix, suffix, single, temperature, max_side, max_tokens, no_think, lc_model)
@@ -179,7 +179,7 @@ def run_all(items, backend, url, model, hf_model, ctype, length, options, name, 
         if s.backend == "ollama" and not s.model:
             s.model = be.list_models()[0]
     except Exception as e:  # noqa: BLE001
-        yield items, *render(items), None, f"Backend indisponible : {e}"
+        yield items, *render(items), None, f"Backend unavailable: {e}"
         return
     log = [f"Démarrage : {len(items)} image(s), backend {s.backend}, modèle {s.model or s.hf_model or s.llamacpp_model or 'défaut'}"]
     jobs = [Job(Path(it["path"])) for it in items]
@@ -191,16 +191,16 @@ def run_all(items, backend, url, model, hf_model, ctype, length, options, name, 
         job, it = jobs[idx], items[idx]
         snap = prog.snapshot()
         progress(snap["fraction"], desc=snap["text"])
-        if ev[0] == "phase" and ev[2] == "chargement":
-            log.append(f"Chargement du modèle « {prog.model} »…")
+        if ev[0] == "phase" and ev[2] == "loading":
+            log.append(f"Loading model “{prog.model}”…")
         if ev[0] == "row":
             it.update(status=job.status, caption=job.caption, seconds=job.duration)
-            if job.status in ("ok", "erreur"):
+            if job.status in ("ok", "error"):
                 log.append(f"{'✔' if job.status == 'ok' else '✖'} {job.path.name} ({job.duration:.1f}s) "
                            f"{job.error or job.caption[:80]}")
         yield items, *render(items), None, "\n".join(log + [snap["text"]])
     ok = sum(it["status"] == "ok" for it in items)
-    log.append(f"Terminé : {ok}/{len(items)} ok · {prog.snapshot()['text']}")
+    log.append(f"Finished: {ok}/{len(items)} successful · {prog.snapshot()['text']}")
     yield items, *render(items), make_zip(items), "\n".join(log)
 
 
@@ -214,12 +214,12 @@ def on_select(items, evt: gr.SelectData):
 def save_caption(items, idx, text):
     items = list(items or [])
     if idx is None or idx >= len(items):
-        return items, *render(items), None, "Sélectionne une image dans la galerie."
+        return items, *render(items), None, "Select an image in the gallery."
     items[idx]["caption"] = (text or "").strip()
-    if items[idx]["status"] != "erreur":
+    if items[idx]["status"] != "error":
         items[idx]["status"] = "ok"
     Path(items[idx]["path"]).with_suffix(".txt").write_text(items[idx]["caption"] + "\n", "utf-8")
-    return items, *render(items), make_zip(items), f"Caption enregistrée pour {Path(items[idx]['path']).name}"
+    return items, *render(items), make_zip(items), f"Caption saved for {Path(items[idx]['path']).name}"
 
 
 # --------------------------------------------------------------------------- #
@@ -229,7 +229,7 @@ def build(default_backend: str = DEFAULT_BACKEND) -> gr.Blocks:
     s0 = Settings.load()
     with gr.Blocks(title="Captionz") as demo:
         gr.Markdown("# Captionz\nBatch image captioning with vision models "
-                    "(Ollama locally, `transformers` on Hugging Face Spaces).")
+                    "(Ollama locally or `transformers` on Hugging Face Spaces).")
         items = gr.State([])
         sel_idx = gr.State(None)
 
@@ -249,68 +249,68 @@ def build(default_backend: str = DEFAULT_BACKEND) -> gr.Blocks:
                                                visible=default_backend == "llamacpp", allow_custom_value=True)
                         refresh = gr.Button("↻", scale=0, min_width=48)
                     status = gr.Markdown("…")
-                    with gr.Accordion("Modèles llama.cpp (sans Ollama)", open=False, visible=default_backend == "llamacpp") as lc_box:
+                    with gr.Accordion("llama.cpp models (no Ollama)", open=False, visible=default_backend == "llamacpp") as lc_box:
                         with gr.Row():
-                            lc_known = gr.Dropdown(list(LC_KNOWN), value=LC_DEFAULT["name"], label="Télécharger (Hugging Face)")
-                            lc_dl = gr.Button("Télécharger")
+                            lc_known = gr.Dropdown(list(LC_KNOWN), value=LC_DEFAULT["name"], label="Download from Hugging Face")
+                            lc_dl = gr.Button("Download")
                         with gr.Row():
                             try:
                                 _oll = lc_registry().ollama_vision_models()
                             except Exception:
                                 _oll = []
-                            lc_oll = gr.Dropdown(_oll, value=_oll[0] if _oll else None, label="Importer depuis Ollama",
+                            lc_oll = gr.Dropdown(_oll, value=_oll[0] if _oll else None, label="Import from Ollama",
                                                  allow_custom_value=True)
-                            lc_imp = gr.Button("Importer")
-                            lc_srv = gr.Button("Mettre à jour llama-server")
-                        lc_log = gr.Textbox(lines=3, label="Journal modèles", interactive=False)
+                            lc_imp = gr.Button("Import")
+                            lc_srv = gr.Button("Update llama-server")
+                        lc_log = gr.Textbox(lines=3, label="Model log", interactive=False)
 
                 with gr.Group():
-                    gr.Markdown("**Sources**")
-                    files = gr.File(file_count="multiple", type="filepath", label="Images (fichiers ou dossier)",
+                    gr.Markdown("**Images**")
+                    files = gr.File(file_count="multiple", type="filepath", label="Images (files or folder)",
                                     file_types=["image"], height=120)
                     with gr.Row():
-                        paste = gr.Image(type="pil", sources=["clipboard", "upload"], label="Coller une image (Ctrl+V)",
+                        paste = gr.Image(type="pil", sources=["clipboard", "upload"], label="Paste an image (Ctrl+V)",
                                          height=160)
                         with gr.Column():
-                            add_paste = gr.Button("Ajouter l'image collée")
-                            clear = gr.Button("Vider la liste", variant="secondary")
+                            add_paste = gr.Button("Add pasted image")
+                            clear = gr.Button("Clear list", variant="secondary")
 
                 with gr.Group():
                     gr.Markdown("**Prompt**")
                     with gr.Row():
-                        ctype = gr.Dropdown(list(CAPTION_TYPES), value=s0.caption_type, label="Type de caption", scale=2)
-                        length = gr.Dropdown(list(CAPTION_LENGTHS), value=s0.caption_length, label="Longueur", scale=1)
-                    with gr.Accordion("Options supplémentaires", open=False):
+                        ctype = gr.Dropdown(list(CAPTION_TYPES), value=s0.caption_type, label="Caption type", scale=2)
+                        length = gr.Dropdown(list(CAPTION_LENGTHS), value=s0.caption_length, label="Length", scale=1)
+                    with gr.Accordion("Additional options", open=False):
                         options = gr.CheckboxGroup(EXTRA_OPTIONS, value=[o for o in s0.options if o in EXTRA_OPTIONS],
                                                    label="", show_label=False)
-                    name = gr.Textbox(value=s0.name, label="Nom du personnage ({name})",
-                                      placeholder="vide = the main character")
+                    name = gr.Textbox(value=s0.name, label="Character name ({name})",
+                                      placeholder="blank = the main character")
                     custom = gr.Textbox(value=s0.custom_prompt, lines=2,
-                                        label="Prompt personnalisé (remplace type / longueur / options si rempli)")
-                    final_prompt = gr.Textbox(lines=3, interactive=False, label="Prompt final envoyé au modèle")
+                                        label="Custom prompt (overrides type, length, and options when provided)")
+                    final_prompt = gr.Textbox(lines=3, interactive=False, label="Final prompt sent to the model")
 
                 with gr.Group():
-                    gr.Markdown("**Sortie et modèle**")
+                    gr.Markdown("**Output and model**")
                     with gr.Row():
-                        prefix = gr.Textbox(value=s0.prefix, label="Préfixe (trigger)")
-                        suffix = gr.Textbox(value=s0.suffix, label="Suffixe")
-                        single = gr.Checkbox(value=s0.single_line, label="Une seule ligne")
+                        prefix = gr.Textbox(value=s0.prefix, label="Prefix (trigger)")
+                        suffix = gr.Textbox(value=s0.suffix, label="Suffix")
+                        single = gr.Checkbox(value=s0.single_line, label="Single line")
                     with gr.Row():
-                        temperature = gr.Slider(0, 1.5, value=s0.temperature, step=0.1, label="Température")
-                        max_side = gr.Number(value=s0.max_side, precision=0, label="Côté max px (0 = brut)")
-                        max_tokens = gr.Number(value=s0.max_tokens, precision=0, label="Tokens max (0 = illimité)")
-                        no_think = gr.Checkbox(value=s0.no_think, label="Désactiver le thinking")
+                        temperature = gr.Slider(0, 1.5, value=s0.temperature, step=0.1, label="Temperature")
+                        max_side = gr.Number(value=s0.max_side, precision=0, label="Maximum image side in px (0 = original)")
+                        max_tokens = gr.Number(value=s0.max_tokens, precision=0, label="Maximum tokens (0 = unlimited)")
+                        no_think = gr.Checkbox(value=s0.no_think, label="Disable reasoning")
 
-                run = gr.Button("▶ Captionner tout", variant="primary")
-                log = gr.Textbox(lines=6, label="Journal", interactive=False)
+                run = gr.Button("▶ Caption all", variant="primary")
+                log = gr.Textbox(lines=6, label="Log", interactive=False)
 
             with gr.Column(scale=2):
                 gallery = gr.Gallery(label="Images", columns=3, height=320, allow_preview=True, type="filepath")
-                table = gr.Dataframe(headers=["Fichier", "Statut", "Durée", "Caption"], type="array",
-                                     interactive=False, wrap=True, label="Résultats")
-                caption_box = gr.Textbox(lines=6, label="Caption de l'image sélectionnée (éditable)")
-                save = gr.Button("💾 Enregistrer la caption")
-                zip_out = gr.File(label="Télécharger les captions (zip)", interactive=False)
+                table = gr.Dataframe(headers=["File", "Status", "Duration", "Caption"], type="array",
+                                     interactive=False, wrap=True, label="Results")
+                caption_box = gr.Textbox(lines=6, label="Selected image caption (editable)")
+                save = gr.Button("💾 Save caption")
+                zip_out = gr.File(label="Download captions (ZIP)", interactive=False)
 
         # ---- wiring ---------------------------------------------------------- #
         prompt_inputs = [ctype, length, options, name, custom]

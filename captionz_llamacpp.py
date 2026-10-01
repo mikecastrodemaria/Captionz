@@ -237,7 +237,7 @@ class ServerBinary:
             server.chmod(0o755)
         self.current_file.write_text(json.dumps({"tag": tag, "build": build, "server": str(server)}, indent=2), "utf-8")
         shutil.rmtree(tmp, ignore_errors=True)
-        _log(progress, f"✔ llama-server prêt : {server}")
+        _log(progress, f"✔ llama-server ready: {server}")
         return server
 
     def update(self, progress=None) -> str:
@@ -245,7 +245,7 @@ class ServerBinary:
         cur = self.current()
         rel = latest_release()
         if cur and cur.get("tag") == rel["tag_name"] and cur.get("build") == pick_build(self.build_override):
-            _log(progress, f"llama-server déjà à jour ({cur['tag']})")
+            _log(progress, f"llama-server is already up to date ({cur['tag']})")
             return cur["tag"]
         old = cur and Path(cur["server"]).parent
         self.install(progress, rel["tag_name"])
@@ -302,7 +302,7 @@ class ModelRegistry:
 
     def ensure_default(self, progress=None) -> str:
         if not self.has(DEFAULT_MODEL["name"]):
-            _log(progress, f"Téléchargement du modèle par défaut {DEFAULT_MODEL['name']} (≈ 2,9 Go)…")
+            _log(progress, f"Downloading the default model {DEFAULT_MODEL['name']} (about 2.9 GB)…")
             self.add_known(DEFAULT_MODEL["name"], progress)
         return DEFAULT_MODEL["name"]
 
@@ -310,7 +310,7 @@ class ModelRegistry:
         """Re-download a Hugging Face model when the remote file size changed."""
         info = self.info(name)
         if info.get("source") != "huggingface":
-            _log(progress, f"{name} : pas une source Hugging Face, rien à mettre à jour")
+            _log(progress, f"{name}: not a Hugging Face source; nothing to update")
             return False
         changed = False
         for key, local in (("model_file", "model.gguf"), ("mmproj_file", "mmproj.gguf")):
@@ -324,11 +324,11 @@ class ModelRegistry:
                 continue
             lp = self.models_dir / name / local
             if remote and lp.exists() and lp.stat().st_size != remote:
-                _log(progress, f"{info[key]} a changé sur le Hub, nouveau téléchargement")
+                _log(progress, f"{info[key]} changed on the Hub; downloading again")
                 lp.unlink()
                 download(url, lp, progress, info[key])
                 changed = True
-        _log(progress, f"{name} : {'mis à jour' if changed else 'déjà à jour'}")
+        _log(progress, f"{name}: {'updated' if changed else 'already up to date'}")
         return changed
 
     # ---- Ollama import ----------------------------------------------------- #
@@ -346,7 +346,7 @@ class ModelRegistry:
         root = cls.ollama_models_dir() / "manifests"
         candidates = list(root.glob(f"*/{ns}/{short}/{tag}"))
         if not candidates:
-            raise FileNotFoundError(f"modèle Ollama introuvable : {ollama_name} (dans {root})")
+            raise FileNotFoundError(f"Ollama model not found: {ollama_name} (in {root})")
         return candidates[0], json.loads(candidates[0].read_text("utf-8"))
 
     @classmethod
@@ -372,9 +372,9 @@ class ModelRegistry:
         model = layers.get("application/vnd.ollama.image.model")
         proj = layers.get("application/vnd.ollama.image.projector")
         if not model:
-            raise RuntimeError(f"{ollama_name} : pas de couche modèle dans le manifeste")
+            raise RuntimeError(f"{ollama_name}: model layer missing from the manifest")
         if not proj:
-            raise RuntimeError(f"{ollama_name} : pas de projecteur vision (modèle texte seul ?)")
+            raise RuntimeError(f"{ollama_name}: vision projector missing (text-only model?)")
         blobs = self.ollama_models_dir() / "blobs"
         name = name or re.sub(r"[^A-Za-z0-9._-]+", "_", ollama_name.split("/")[-1])
         d = self.models_dir / name
@@ -391,13 +391,13 @@ class ModelRegistry:
             for kind, fn in (("lien", os.link), ("lien symbolique", os.symlink)):
                 try:
                     fn(src, dst)
-                    _log(progress, f"{kind} {target} ← {src.name[:19]}… ({layer['size'] >> 20} Mo, sans copie)")
+                    _log(progress, f"{kind} {target} ← {src.name[:19]}… ({layer['size'] >> 20} MB, no copy)")
                     linked = True
                     break
                 except OSError:
                     continue
             if not linked:
-                _log(progress, f"copie {target} ({layer['size'] >> 20} Mo)…")
+                _log(progress, f"Copying {target} ({layer['size'] >> 20} MB)…")
                 shutil.copy2(src, dst)
         # Ollama also stores a system prompt and sampling params: keep them so the
         # model behaves like it does under Ollama.
@@ -420,7 +420,7 @@ class ModelRegistry:
             except Exception:
                 pass
         (d / "model.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False), "utf-8")
-        _log(progress, f"✔ {ollama_name} importé sous le nom {name}")
+        _log(progress, f"✔ Imported {ollama_name} as {name}")
         return name
 
 
@@ -468,22 +468,22 @@ class LlamaServer:
         self.proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, cwd=self.server_bin.parent,
                                      creationflags=flags)
         self.model = model_name
-        _log(progress, f"llama-server : chargement de {model_name} sur le port {self.port}…")
+        _log(progress, f"llama-server: loading {model_name} on port {self.port}…")
         t0 = time.time()
         while time.time() - t0 < timeout:
             if self.proc.poll() is not None:
                 tail = self.log_file.read_bytes()[-1500:].decode("utf-8", "replace")
-                raise RuntimeError(f"llama-server s'est arrêté (code {self.proc.returncode}) :\n{tail}")
+                raise RuntimeError(f"llama-server stopped (exit code {self.proc.returncode}):\n{tail}")
             try:
                 with urllib.request.urlopen(self.url + "/health", timeout=2) as r:
                     if r.status == 200:
-                        _log(progress, f"✔ {model_name} chargé en {time.time() - t0:.0f} s")
+                        _log(progress, f"✔ {model_name} loaded in {time.time() - t0:.0f} s")
                         return
             except Exception:
                 pass
             time.sleep(0.5)
         self.stop()
-        raise TimeoutError(f"llama-server n'a pas répondu en {timeout} s (voir {self.log_file})")
+        raise TimeoutError(f"llama-server did not respond within {timeout} s (see {self.log_file})")
 
     def stop(self) -> None:
         if self.proc and self.proc.poll() is None:
@@ -520,7 +520,7 @@ class LlamaServer:
         choice = (data.get("choices") or [{}])[0]
         text = OllamaClient.strip_thinking((choice.get("message") or {}).get("content") or "")
         if choice.get("finish_reason") == "length" and not text:
-            raise RuntimeError(f"limite de {max_tokens} tokens atteinte sans caption ; augmente « tokens max »")
+            raise RuntimeError(f"Token limit of {max_tokens} reached without a caption; increase the maximum token limit.")
         return text
 
 
@@ -558,10 +558,10 @@ class LlamaCppBackend(Backend):
             server_bin = self.binary.ensure(self.on_progress)
             if not self.registry.has(name):
                 if name in KNOWN_MODELS:
-                    _log(self.on_progress, f"Téléchargement de {name}…")
+                    _log(self.on_progress, f"Downloading {name}…")
                     self.registry.add_known(name, self.on_progress)
                 else:
-                    raise FileNotFoundError(f"modèle llama.cpp inconnu : {name} (voir captionz_models.py)")
+                    raise FileNotFoundError(f"Unknown llama.cpp model: {name} (see captionz_models.py)")
             if LlamaCppBackend._server is None or LlamaCppBackend._server.server_bin != server_bin:
                 if LlamaCppBackend._server:
                     LlamaCppBackend._server.stop()

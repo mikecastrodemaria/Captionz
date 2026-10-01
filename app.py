@@ -124,24 +124,24 @@ class App(tk.Tk):
         paned.add(right, weight=2)
 
         # ================= left column: settings =================
-        top = ttk.LabelFrame(left, text="Moteur")
+        top = ttk.LabelFrame(left, text="Backend")
         top.pack(fill="x", **pad)
         self.var_backend_label = tk.StringVar(value=BACKEND_LABELS.get(s.backend, BACKEND_LABELS["ollama"]))
         cbb = ttk.Combobox(top, textvariable=self.var_backend_label, state="readonly", width=22,
                            values=[BACKEND_LABELS[b] for b in BACKENDS])
         cbb.grid(row=0, column=0, sticky="w", **pad)
         cbb.bind("<<ComboboxSelected>>", lambda e: self._on_backend_change())
-        self.lbl_url = ttk.Label(top, text="URL :")
+        self.lbl_url = ttk.Label(top, text="URL:")
         self.lbl_url.grid(row=0, column=1, sticky="w", **pad)
         self.var_url = tk.StringVar(value=s.ollama_url)
         self.ent_url = ttk.Entry(top, textvariable=self.var_url, width=24)
         self.ent_url.grid(row=0, column=2, sticky="w", **pad)
-        ttk.Label(top, text="Modèle :").grid(row=0, column=3, sticky="w", **pad)
+        ttk.Label(top, text="Model:").grid(row=0, column=3, sticky="w", **pad)
         self.var_model = tk.StringVar(value=active_model(s))
         self.cmb_model = ttk.Combobox(top, textvariable=self.var_model, state="readonly", width=40)
         self.cmb_model.grid(row=0, column=4, sticky="we", **pad)
         ttk.Button(top, text="↻", width=3, command=self.refresh_models).grid(row=0, column=5, **pad)
-        self.btn_models = ttk.Button(top, text="Modèles llama.cpp…", command=self.open_model_manager)
+        self.btn_models = ttk.Button(top, text="llama.cpp models…", command=self.open_model_manager)
         self.btn_models.grid(row=0, column=6, **pad)
         self.lbl_conn = ttk.Label(top, text="…")
         self.lbl_conn.grid(row=0, column=7, sticky="w", **pad)
@@ -152,16 +152,16 @@ class App(tk.Tk):
         # --- sources ---
         src = ttk.LabelFrame(left, text="Sources")
         src.pack(fill="x", **pad)
-        ttk.Button(src, text="📄 Un fichier…", command=self.add_file).pack(side="left", **pad)
-        ttk.Button(src, text="📑 Plusieurs fichiers…", command=self.add_files).pack(side="left", **pad)
-        ttk.Button(src, text="📁 Un dossier…", command=self.add_folder).pack(side="left", **pad)
-        ttk.Button(src, text="📋 Coller (Ctrl+V)", command=self.paste_image).pack(side="left", **pad)
+        ttk.Button(src, text="📄 Add file…", command=self.add_file).pack(side="left", **pad)
+        ttk.Button(src, text="📑 Add files…", command=self.add_files).pack(side="left", **pad)
+        ttk.Button(src, text="📁 Add folder…", command=self.add_folder).pack(side="left", **pad)
+        ttk.Button(src, text="📋 Paste (Ctrl+V)", command=self.paste_image).pack(side="left", **pad)
         self.bind_all("<Control-v>", self._on_ctrl_v)
         self.var_recursive = tk.BooleanVar(value=s.recursive)
-        ttk.Checkbutton(src, text="récursif", variable=self.var_recursive).pack(side="left", **pad)
+        ttk.Checkbutton(src, text="Recursive", variable=self.var_recursive).pack(side="left", **pad)
         ttk.Separator(src, orient="vertical").pack(side="left", fill="y", padx=8, pady=4)
-        ttk.Button(src, text="Retirer sélection", command=self.remove_selected).pack(side="left", **pad)
-        ttk.Button(src, text="Vider", command=self.clear_jobs).pack(side="left", **pad)
+        ttk.Button(src, text="Remove selected", command=self.remove_selected).pack(side="left", **pad)
+        ttk.Button(src, text="Clear", command=self.clear_jobs).pack(side="left", **pad)
         self.lbl_count = ttk.Label(src, text="0 image")
         self.lbl_count.pack(side="right", **pad)
 
@@ -170,18 +170,18 @@ class App(tk.Tk):
         pf.pack(fill="both", expand=True, **pad)
         row = ttk.Frame(pf)
         row.pack(fill="x", **pad)
-        ttk.Label(row, text="Type de caption :").pack(side="left")
+        ttk.Label(row, text="Caption type:").pack(side="left")
         self.var_type = tk.StringVar(value=s.caption_type)
         cb = ttk.Combobox(row, textvariable=self.var_type, state="readonly", width=30, values=list(CAPTION_TYPES))
         cb.pack(side="left", padx=4)
-        ttk.Label(row, text="Longueur :").pack(side="left", padx=(12, 0))
+        ttk.Label(row, text="Length:").pack(side="left", padx=(12, 0))
         self.var_length = tk.StringVar(value=s.caption_length)
         cl = ttk.Combobox(row, textvariable=self.var_length, state="readonly", width=14, values=list(CAPTION_LENGTHS))
         cl.pack(side="left", padx=4)
         for w in (cb, cl):
             w.bind("<<ComboboxSelected>>", self._update_prompt_preview)
 
-        ttk.Label(pf, text="Options supplémentaires :").pack(anchor="w", padx=6)
+        ttk.Label(pf, text="Additional options:").pack(anchor="w", padx=6)
         sf = ScrollFrame(pf, height=190)
         sf.pack(fill="x", padx=6)
         self.opt_vars: list[tuple[str, tk.BooleanVar]] = []
@@ -193,47 +193,47 @@ class App(tk.Tk):
 
         row = ttk.Frame(pf)
         row.pack(fill="x", **pad)
-        ttk.Label(row, text="Nom du personnage ({name}) :").pack(side="left")
+        ttk.Label(row, text="Character name ({name}):").pack(side="left")
         self.var_name = tk.StringVar(value=s.name)
         self.var_name.trace_add("write", lambda *_: self._update_prompt_preview())
         ttk.Entry(row, textvariable=self.var_name, width=30).pack(side="left", padx=4)
-        ttk.Label(row, text="vide = « the main character »").pack(side="left", padx=4)
+        ttk.Label(row, text="blank = “the main character”").pack(side="left", padx=4)
 
-        ttk.Label(pf, text="Prompt personnalisé (remplace type / longueur / options si rempli) :").pack(anchor="w", padx=6)
+        ttk.Label(pf, text="Custom prompt (overrides type, length, and options when provided):").pack(anchor="w", padx=6)
         self.txt_custom = tk.Text(pf, height=3, wrap="word")
         self.txt_custom.pack(fill="x", padx=6)
         self.txt_custom.insert("1.0", s.custom_prompt)
         self.txt_custom.bind("<KeyRelease>", self._update_prompt_preview)
         self._text_widgets.append(self.txt_custom)
 
-        ttk.Label(pf, text="Prompt final envoyé au modèle :").pack(anchor="w", padx=6, pady=(4, 0))
+        ttk.Label(pf, text="Final prompt sent to the model:").pack(anchor="w", padx=6, pady=(4, 0))
         self.txt_preview = tk.Text(pf, height=4, wrap="word", state="disabled")
         self.txt_preview.pack(fill="both", expand=True, padx=6, pady=(0, 4))
         self._text_widgets.append(self.txt_preview)
 
         # --- output ---
-        of = ttk.LabelFrame(left, text="Sortie")
+        of = ttk.LabelFrame(left, text="Output")
         of.pack(fill="x", **pad)
         self.var_prefix = tk.StringVar(value=s.prefix)
         self.var_suffix = tk.StringVar(value=s.suffix)
         self.var_ext = tk.StringVar(value=s.extension)
         self.var_existing = tk.StringVar(value=s.existing)
         self.var_single = tk.BooleanVar(value=s.single_line)
-        ttk.Label(of, text="Préfixe (trigger) :").grid(row=0, column=0, sticky="w", **pad)
+        ttk.Label(of, text="Prefix (trigger):").grid(row=0, column=0, sticky="w", **pad)
         ttk.Entry(of, textvariable=self.var_prefix, width=24).grid(row=0, column=1, **pad)
-        ttk.Label(of, text="Suffixe :").grid(row=0, column=2, sticky="w", **pad)
+        ttk.Label(of, text="Suffix:").grid(row=0, column=2, sticky="w", **pad)
         ttk.Entry(of, textvariable=self.var_suffix, width=24).grid(row=0, column=3, **pad)
-        ttk.Label(of, text="Extension :").grid(row=0, column=4, sticky="w", **pad)
+        ttk.Label(of, text="Extension:").grid(row=0, column=4, sticky="w", **pad)
         ttk.Entry(of, textvariable=self.var_ext, width=8).grid(row=0, column=5, **pad)
-        ttk.Label(of, text="Captions existantes :").grid(row=1, column=0, sticky="w", **pad)
+        ttk.Label(of, text="Existing captions:").grid(row=1, column=0, sticky="w", **pad)
         rf = ttk.Frame(of)
         rf.grid(row=1, column=1, columnspan=3, sticky="w")
-        for txt, val in (("ignorer", "skip"), ("écraser", "overwrite"), ("ajouter à la suite", "append")):
+        for txt, val in (("Skip", "skip"), ("Overwrite", "overwrite"), ("Append", "append")):
             ttk.Radiobutton(rf, text=txt, value=val, variable=self.var_existing).pack(side="left", padx=4)
-        ttk.Checkbutton(of, text="Une seule ligne", variable=self.var_single).grid(row=1, column=4, columnspan=2, sticky="w", **pad)
+        ttk.Checkbutton(of, text="Single line", variable=self.var_single).grid(row=1, column=4, columnspan=2, sticky="w", **pad)
 
         # --- model / perf ---
-        mf = ttk.LabelFrame(left, text="Modèle")
+        mf = ttk.LabelFrame(left, text="Model")
         mf.pack(fill="x", **pad)
         self.var_temp = tk.DoubleVar(value=s.temperature)
         self.var_maxtok = tk.IntVar(value=s.max_tokens)
@@ -241,33 +241,33 @@ class App(tk.Tk):
         self.var_keep = tk.StringVar(value=str(s.keep_alive))
         self.var_maxside = tk.IntVar(value=s.max_side)
         self.var_cpu = tk.BooleanVar(value=s.cpu_only)
-        ttk.Label(mf, text="Température :").grid(row=0, column=0, sticky="w", **pad)
+        ttk.Label(mf, text="Temperature:").grid(row=0, column=0, sticky="w", **pad)
         ttk.Spinbox(mf, from_=0.0, to=1.5, increment=0.1, textvariable=self.var_temp, width=6).grid(row=0, column=1, **pad)
-        ttk.Label(mf, text="keep_alive (0 = décharger) :").grid(row=0, column=2, sticky="w", **pad)
+        ttk.Label(mf, text="keep_alive (0 = unload):").grid(row=0, column=2, sticky="w", **pad)
         ttk.Entry(mf, textvariable=self.var_keep, width=8).grid(row=0, column=3, **pad)
-        ttk.Label(mf, text="Côté max px (0 = brut) :").grid(row=0, column=4, sticky="w", **pad)
+        ttk.Label(mf, text="Maximum side in px (0 = original):").grid(row=0, column=4, sticky="w", **pad)
         sb = ttk.Spinbox(mf, from_=0, to=4096, increment=128, textvariable=self.var_maxside, width=7)
         sb.grid(row=0, column=5, **pad)
         if Image is None:
             sb.configure(state="disabled")
             ttk.Label(mf, text="(pip install pillow)").grid(row=0, column=6, sticky="w")
-        ttk.Checkbutton(mf, text="Forcer CPU", variable=self.var_cpu).grid(row=0, column=7, sticky="w", **pad)
-        ttk.Label(mf, text="Tokens max (0 = illimité) :").grid(row=1, column=0, sticky="w", **pad)
+        ttk.Checkbutton(mf, text="Force CPU", variable=self.var_cpu).grid(row=0, column=7, sticky="w", **pad)
+        ttk.Label(mf, text="Maximum tokens (0 = unlimited):").grid(row=1, column=0, sticky="w", **pad)
         ttk.Spinbox(mf, from_=0, to=8192, increment=256, textvariable=self.var_maxtok, width=6).grid(row=1, column=1, **pad)
-        ttk.Label(mf, text="borne la génération : un modèle qui divague est coupé au lieu de bloquer").grid(
+        ttk.Label(mf, text="Limits generation to prevent rambling models from hanging").grid(
             row=1, column=2, columnspan=5, sticky="w", **pad)
-        ttk.Checkbutton(mf, text="Désactiver le thinking", variable=self.var_nothink).grid(row=1, column=7, sticky="w", **pad)
+        ttk.Checkbutton(mf, text="Disable reasoning", variable=self.var_nothink).grid(row=1, column=7, sticky="w", **pad)
 
         # --- controls ---
         ctl = ttk.Frame(left)
         ctl.pack(fill="x", **pad)
-        self.btn_start = ttk.Button(ctl, text="▶ Captionner tout", command=lambda: self.start(None))
+        self.btn_start = ttk.Button(ctl, text="▶ Caption all", command=lambda: self.start(None))
         self.btn_start.pack(side="left", **pad)
-        self.btn_sel = ttk.Button(ctl, text="▶ Captionner la sélection", command=self.start_selected)
+        self.btn_sel = ttk.Button(ctl, text="▶ Caption selected", command=self.start_selected)
         self.btn_sel.pack(side="left", **pad)
-        self.btn_stop = ttk.Button(ctl, text="■ Arrêter", command=self.stop, state="disabled")
+        self.btn_stop = ttk.Button(ctl, text="■ Stop", command=self.stop, state="disabled")
         self.btn_stop.pack(side="left", **pad)
-        ttk.Button(ctl, text="🌓 Mode sombre", command=self.toggle_theme).pack(side="right", **pad)
+        ttk.Button(ctl, text="🌓 Dark mode", command=self.toggle_theme).pack(side="right", **pad)
         self.progress = ttk.Progressbar(ctl, mode="determinate", maximum=1000)
         self.progress.pack(side="left", fill="x", expand=True, **pad)
         self.lbl_progress = ttk.Label(ctl, text="")
@@ -284,9 +284,9 @@ class App(tk.Tk):
         lf.pack(fill="both", expand=True, **pad)
         cols = ("file", "status", "time")
         self.tree = ttk.Treeview(lf, columns=cols, show="headings", selectmode="extended", height=10)
-        self.tree.heading("file", text="Fichier")
-        self.tree.heading("status", text="Statut")
-        self.tree.heading("time", text="Durée")
+        self.tree.heading("file", text="File")
+        self.tree.heading("status", text="Status")
+        self.tree.heading("time", text="Duration")
         self.tree.column("file", width=340, anchor="w")
         self.tree.column("status", width=80, anchor="center")
         self.tree.column("time", width=60, anchor="center")
@@ -296,21 +296,21 @@ class App(tk.Tk):
         vsb.pack(side="right", fill="y")
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
 
-        pv = ttk.LabelFrame(right, text="Aperçu")
+        pv = ttk.LabelFrame(right, text="Preview")
         pv.pack(fill="both", expand=True, **pad)
         self.canvas = tk.Canvas(pv, height=300, highlightthickness=0)
         self.canvas.pack(fill="both", expand=True, padx=4, pady=4)
         self.canvas.bind("<Configure>", lambda e: self._show_preview())
 
-        cf = ttk.LabelFrame(right, text="Caption (éditable)")
+        cf = ttk.LabelFrame(right, text="Caption (editable)")
         cf.pack(fill="both", expand=True, **pad)
         self.txt_caption = tk.Text(cf, height=7, wrap="word")
         self.txt_caption.pack(fill="both", expand=True, padx=6, pady=4)
         self._text_widgets.append(self.txt_caption)
         bf = ttk.Frame(cf)
         bf.pack(fill="x", padx=6, pady=(0, 4))
-        ttk.Button(bf, text="▶ Captionner cette image", command=self.start_current).pack(side="left")
-        ttk.Button(bf, text="💾 Enregistrer la caption", command=self.save_caption).pack(side="left", padx=6)
+        ttk.Button(bf, text="▶ Caption this image", command=self.start_current).pack(side="left")
+        ttk.Button(bf, text="💾 Save caption", command=self.save_caption).pack(side="left", padx=6)
         self.lbl_caption_file = ttk.Label(bf, text="")
         self.lbl_caption_file.pack(side="left", padx=6)
 
@@ -423,8 +423,8 @@ class App(tk.Tk):
 
     def _refresh_row(self, idx: int):
         job = self.jobs[idx]
-        tag = {"ok": "ok", "erreur": "err", "ignoré": "skip", "en cours": "run"}.get(job.status, "")
-        if job.status == "en cours" and job.started:
+        tag = {"ok": "ok", "error": "err", "skipped": "skip", "processing": "run"}.get(job.status, "")
+        if job.status == "processing" and job.started:
             dur = f"{time.time() - job.started:.0f}s…"
         else:
             dur = f"{job.duration:.1f}s" if job.duration else ""
@@ -463,7 +463,7 @@ class App(tk.Tk):
         w, h = max(self.canvas.winfo_width(), 50), max(self.canvas.winfo_height(), 50)
         t = getattr(self, "_theme", THEMES["light"])
         if path is None:
-            self.canvas.create_text(w / 2, h / 2, text="Aucune image sélectionnée", fill=t["muted"])
+            self.canvas.create_text(w / 2, h / 2, text="No image selected", fill=t["muted"])
             return
         try:
             if Image is not None:
@@ -476,23 +476,23 @@ class App(tk.Tk):
                 self._preview_img = img.subsample(f, f)
             self.canvas.create_image(w / 2, h / 2, image=self._preview_img)
         except Exception as e:  # noqa: BLE001
-            self.canvas.create_text(w / 2, h / 2, text=f"Aperçu impossible\n{e}", fill=t["muted"], justify="center")
+            self.canvas.create_text(w / 2, h / 2, text=f"Preview unavailable\n{e}", fill=t["muted"], justify="center")
 
     def save_caption(self):
         idx = self._current_index()
         if idx is None:
-            messagebox.showinfo(APP_TITLE, "Sélectionne une image dans la liste.")
+            messagebox.showinfo(APP_TITLE, "Select an image from the list.")
             return
         job = self.jobs[idx]
         text = self.txt_caption.get("1.0", "end").strip()
         out = job.path.with_suffix(self._collect_settings().extension)
         out.write_text(text + "\n", encoding="utf-8")
         job.caption = text
-        if job.status != "erreur":
+        if job.status != "error":
             job.status = "ok"
         self._refresh_row(idx)
         self.lbl_caption_file.configure(text=out.name + " (existe)")
-        self._log(f"💾 {out.name} enregistré.")
+        self._log(f"💾 Saved {out.name}.")
 
     # ---- backend / models ------------------------------------------------ #
     @property
@@ -539,8 +539,8 @@ class App(tk.Tk):
         if b != self.backend:
             return
         if error:
-            self.lbl_conn.configure(text="✖ hors ligne" if b == "ollama" else "✖ erreur")
-            self._log(f"{'Impossible de joindre Ollama' if b == 'ollama' else 'Erreur'} : {error}")
+            self.lbl_conn.configure(text="✖ offline" if b == "ollama" else "✖ error")
+            self._log(f"{'Could not connect to Ollama' if b == 'ollama' else 'Error'}: {error}")
             self.cmb_model["values"] = []
             return
         self.cmb_model["values"] = models
@@ -551,23 +551,23 @@ class App(tk.Tk):
             if b == "llamacpp":
                 have = self._lc_registry().list()
                 self.lbl_conn.configure(text=f"✔ {len(have)} modèle(s) local(aux)" if have
-                                        else "modèle par défaut téléchargé au 1er lancement (≈ 2,9 Go)")
+                                        else "Default model will be downloaded on first launch (about 2.9 GB)")
             else:
-                self.lbl_conn.configure(text=f"✔ {len(models)} modèle(s) vision")
+                self.lbl_conn.configure(text=f"✔ {len(models)} vision model(s)")
         else:
-            self.lbl_conn.configure(text="aucun modèle vision")
+            self.lbl_conn.configure(text="No vision models found")
             if b == "ollama":
-                self._log("Aucun modèle vision trouvé. Exemple : `ollama pull qwen3-vl:8b`.")
+                self._log("No vision models found. Example: `ollama pull qwen3-vl:8b`.")
 
     # ---- llama.cpp model manager ----------------------------------------- #
     def open_model_manager(self):
         reg = self._lc_registry()
         win = tk.Toplevel(self)
-        win.title("Modèles llama.cpp (sans Ollama)")
+        win.title("llama.cpp models (no Ollama)")
         win.geometry("720x460")
         win.transient(self)
         pad = {"padx": 6, "pady": 4}
-        ttk.Label(win, text=f"Dossier : {reg.models_dir}").pack(anchor="w", **pad)
+        ttk.Label(win, text=f"Folder: {reg.models_dir}").pack(anchor="w", **pad)
         lb = tk.Listbox(win, height=8)
         lb.pack(fill="both", expand=True, padx=6)
         t = getattr(self, "_theme", THEMES["light"])
@@ -585,21 +585,21 @@ class App(tk.Tk):
                 self.ui_queue.put(("log", f"▶ {label}…"))
                 try:
                     fn(lambda m: self.ui_queue.put(("log", m)))
-                    self.ui_queue.put(("log", f"✔ {label} terminé"))
+                    self.ui_queue.put(("log", f"✔ {label} finished"))
                 except Exception as e:  # noqa: BLE001
                     self.ui_queue.put(("log", f"✖ {label} : {e}"))
                 self.after(0, fill)
             threading.Thread(target=worker, daemon=True).start()
 
         row1 = ttk.Frame(win); row1.pack(fill="x", **pad)
-        ttk.Label(row1, text="Télécharger (Hugging Face) :").pack(side="left")
+        ttk.Label(row1, text="Download from Hugging Face:").pack(side="left")
         var_known = tk.StringVar(value=LC_DEFAULT["name"])
         ttk.Combobox(row1, textvariable=var_known, state="readonly", width=34, values=list(LC_KNOWN)).pack(side="left", padx=4)
-        ttk.Button(row1, text="Télécharger", command=lambda: run(
-            f"téléchargement {var_known.get()}", lambda log: reg.add_known(var_known.get(), log))).pack(side="left")
+        ttk.Button(row1, text="Download", command=lambda: run(
+            f"Downloading {var_known.get()}", lambda log: reg.add_known(var_known.get(), log))).pack(side="left")
 
         row2 = ttk.Frame(win); row2.pack(fill="x", **pad)
-        ttk.Label(row2, text="Importer depuis Ollama :").pack(side="left")
+        ttk.Label(row2, text="Import from Ollama:").pack(side="left")
         var_oll = tk.StringVar()
         cmb_oll = ttk.Combobox(row2, textvariable=var_oll, state="readonly", width=44)
         cmb_oll.pack(side="left", padx=4)
@@ -609,26 +609,26 @@ class App(tk.Tk):
                 var_oll.set(cmb_oll["values"][0])
         except Exception:
             pass
-        ttk.Button(row2, text="Importer", command=lambda: var_oll.get() and run(
-            f"import {var_oll.get()}", lambda log: reg.import_from_ollama(var_oll.get(), None, log))).pack(side="left")
+        ttk.Button(row2, text="Import", command=lambda: var_oll.get() and run(
+            f"Importing {var_oll.get()}", lambda log: reg.import_from_ollama(var_oll.get(), None, log))).pack(side="left")
 
         row3 = ttk.Frame(win); row3.pack(fill="x", **pad)
         def selected():
             sel = lb.curselection()
             return lb.get(sel[0]).split("   ")[0] if sel else ""
-        ttk.Button(row3, text="Utiliser", command=lambda: (self._models_by_backend.__setitem__("llamacpp", selected()),
+        ttk.Button(row3, text="Use", command=lambda: (self._models_by_backend.__setitem__("llamacpp", selected()),
                                                             self.var_model.set(selected()))).pack(side="left")
-        ttk.Button(row3, text="Mettre à jour (Hugging Face)", command=lambda: selected() and run(
-            f"mise à jour {selected()}", lambda log: reg.update_from_source(selected(), log))).pack(side="left", padx=4)
-        ttk.Button(row3, text="Supprimer", command=lambda: selected() and messagebox.askyesno(
-            APP_TITLE, f"Supprimer {selected()} ?") and (reg.remove(selected()), fill())).pack(side="left", padx=4)
+        ttk.Button(row3, text="Update (Hugging Face)", command=lambda: selected() and run(
+            f"Updating {selected()}", lambda log: reg.update_from_source(selected(), log))).pack(side="left", padx=4)
+        ttk.Button(row3, text="Remove", command=lambda: selected() and messagebox.askyesno(
+            APP_TITLE, f"Remove {selected()}?") and (reg.remove(selected()), fill())).pack(side="left", padx=4)
         ttk.Separator(row3, orient="vertical").pack(side="left", fill="y", padx=8)
         binary = ServerBinary(reg.models_dir.parent, self.settings.llamacpp_build)
         cur = binary.current()
-        ttk.Label(row3, text=f"llama-server : {cur['tag'] + ' ' + cur['build'] if cur else 'non installé (auto au 1er lancement)'}").pack(side="left")
-        ttk.Button(row3, text="Mettre à jour llama-server", command=lambda: run(
-            "mise à jour llama-server", lambda log: binary.update(log))).pack(side="left", padx=4)
-        ttk.Label(win, text="Les téléchargements et imports s'affichent dans le journal de la fenêtre principale.",
+        ttk.Label(row3, text=f"llama-server: {cur['tag'] + ' ' + cur['build'] if cur else 'not installed (automatic on first launch)'}").pack(side="left")
+        ttk.Button(row3, text="Update llama-server", command=lambda: run(
+            "Updating llama-server", lambda log: binary.update(log))).pack(side="left", padx=4)
+        ttk.Label(win, text="Downloads and imports appear in the main window log.",
                   foreground=t["muted"]).pack(anchor="w", **pad)
         fill()
 
@@ -642,34 +642,34 @@ class App(tk.Tk):
                 continue
             self.jobs.append(Job(img))
             idx = len(self.jobs) - 1
-            self.tree.insert("", "end", iid=str(idx), values=(str(img), "en attente", ""))
+            self.tree.insert("", "end", iid=str(idx), values=(str(img), "pending", ""))
             added += 1
         self._update_count()
-        self._log(f"{added} image(s) ajoutée(s) ({len(images) - added} doublon(s) ignoré(s)).")
+        self._log(f"{added} image(s) added ({len(images) - added} duplicate(s) skipped).")
         if added and not self.tree.selection():
             first = str(len(self.jobs) - added)
             self.tree.selection_set(first)
             self.tree.see(first)
 
     def add_file(self):
-        f = filedialog.askopenfilename(title="Choisir une image", filetypes=self._filetypes())
+        f = filedialog.askopenfilename(title="Choose an image", filetypes=self._filetypes())
         if f:
             self._add_paths([Path(f)])
 
     def add_files(self):
-        fs = filedialog.askopenfilenames(title="Choisir des images", filetypes=self._filetypes())
+        fs = filedialog.askopenfilenames(title="Choose images", filetypes=self._filetypes())
         if fs:
             self._add_paths([Path(f) for f in fs])
 
     def add_folder(self):
-        d = filedialog.askdirectory(title="Choisir un dossier d'images")
+        d = filedialog.askdirectory(title="Choose an image folder")
         if d:
             self._add_paths([Path(d)])
 
     @staticmethod
     def _filetypes():
         pat = " ".join(f"*{e}" for e in sorted(IMAGE_EXTS))
-        return [("Images", pat), ("Tous les fichiers", "*.*")]
+        return [("Images", pat), ("All files", "*.*")]
 
     # ---- paste from clipboard -------------------------------------------- #
     def _on_ctrl_v(self, event):
@@ -688,13 +688,13 @@ class App(tk.Tk):
             try:
                 data = ImageGrab.grabclipboard()
             except Exception as e:  # noqa: BLE001
-                self._log(f"Presse-papiers illisible : {e}")
+                self._log(f"Could not read clipboard: {e}")
         if isinstance(data, list):                       # files copied in the explorer
             paths = [Path(p) for p in data]
         elif data is not None and Image is not None and isinstance(data, Image.Image):
             out = save_pasted_image(data, self.settings.paste_path)
             paths = [out]
-            self._log(f"Image collée enregistrée : {out}")
+            self._log(f"Pasted image saved: {out}")
         else:                                            # text: file path(s)
             try:
                 txt = self.clipboard_get()
@@ -705,9 +705,9 @@ class App(tk.Tk):
                 if line.strip() and p.exists():
                     paths.append(p)
         if not paths:
-            msg = "Aucune image dans le presse-papiers."
+            msg = "No image found in the clipboard."
             if ImageGrab is None:
-                msg += " Installe Pillow (pip install pillow) pour coller des captures d'écran."
+                msg += " Install Pillow (pip install pillow) to paste screenshots."
             self._log(msg)
             return
         self._add_paths(paths)
@@ -746,14 +746,14 @@ class App(tk.Tk):
     def start_selected(self):
         sel = self._selected_indices()
         if not sel:
-            messagebox.showinfo(APP_TITLE, "Sélectionne une ou plusieurs images dans la liste.")
+            messagebox.showinfo(APP_TITLE, "Select one or more images from the list.")
             return
         self.start(sel)
 
     def start_current(self):
         idx = self._current_index()
         if idx is None:
-            messagebox.showinfo(APP_TITLE, "Sélectionne une image dans la liste.")
+            messagebox.showinfo(APP_TITLE, "Select an image from the list.")
             return
         self.start([idx], force=True)  # explicitly requested: always overwrite
 
@@ -762,10 +762,10 @@ class App(tk.Tk):
             return
         s = self._collect_settings()
         if not active_model(s) and s.backend == "ollama":
-            messagebox.showwarning(APP_TITLE, "Sélectionne un modèle vision.")
+            messagebox.showwarning(APP_TITLE, "Select a vision model.")
             return
         if not self.jobs:
-            messagebox.showwarning(APP_TITLE, "Ajoute au moins une image ou un dossier.")
+            messagebox.showwarning(APP_TITLE, "Add at least one image or folder.")
             return
         if indices is None:
             indices = list(range(len(self.jobs)))
@@ -776,15 +776,15 @@ class App(tk.Tk):
         self.btn_stop.configure(state="normal")
         self.progress.configure(value=0)
         self.lbl_progress.configure(text="0%")
-        self.lbl_status.configure(text="démarrage…")
-        self._log(f"Démarrage : {len(indices)} image(s) · {BACKEND_LABELS[s.backend]} · « {active_model(s) or 'défaut'} »"
-                  f"{'' if Image else ' (Pillow absent : images envoyées brutes)'}.")
+        self.lbl_status.configure(text="Starting…")
+        self._log(f"Starting: {len(indices)} image(s) · {BACKEND_LABELS[s.backend]} · “{active_model(s) or 'default'}”"
+                  f"{'' if Image else ' (Pillow unavailable: sending original images)'}.")
         self.captioner.start(self.jobs, indices, s, force)
 
     def stop(self):
         if self.captioner.is_running():
             self.captioner.stop()
-            self._log("Arrêt demandé, fin de l'image en cours…")
+            self._log("Stop requested; waiting for the current image to finish…")
 
     # ---- UI loop --------------------------------------------------------- #
     def _poll_ui_queue(self):
@@ -802,16 +802,16 @@ class App(tk.Tk):
                     idx = ev[1]
                     self._refresh_row(idx)
                     job = self.jobs[idx]
-                    if job.status == "erreur":
-                        self._log(f"✖ {job.path.name} : {job.error}")
+                    if job.status == "error":
+                        self._log(f"✖ {job.path.name}: {job.error}")
                     elif job.status == "ok" and idx == self._current_index():
                         self.txt_caption.delete("1.0", "end")
                         self.txt_caption.insert("1.0", job.caption)
                         self.lbl_caption_file.configure(
                             text=job.path.with_suffix(self.settings.extension).name + " (existe)")
                 elif ev[0] == "phase":
-                    if ev[2] == "chargement":
-                        self._log(f"Chargement du modèle « {active_model(self.settings) or 'défaut'} »…")
+                    if ev[2] == "loading":
+                        self._log(f"Loading model “{active_model(self.settings) or 'default'}”…")
                 elif ev[0] == "log":
                     self._log(ev[1])
                 elif ev[0] == "done":
@@ -831,27 +831,27 @@ class App(tk.Tk):
             self.lbl_progress.configure(text=f"{snap['fraction'] * 100:.0f}%")
             self.lbl_status.configure(text=snap["text"])
             for i, j in enumerate(self.jobs):
-                if j.status == "en cours":
+                if j.status == "processing":
                     self._refresh_row(i)
         self.after(100, self._poll_ui_queue)
 
     def _on_done(self):
         ok = sum(j.status == "ok" for j in self.jobs)
-        err = sum(j.status == "erreur" for j in self.jobs)
-        skip = sum(j.status == "ignoré" for j in self.jobs)
+        err = sum(j.status == "error" for j in self.jobs)
+        skip = sum(j.status == "skipped" for j in self.jobs)
         stopped = self.captioner.stop_event.is_set()
         snap = self.captioner.progress.snapshot()
         self.progress.configure(value=int(snap["fraction"] * 1000))
         self.lbl_progress.configure(text=f"{snap['fraction'] * 100:.0f}%")
         self.lbl_status.configure(text=snap["text"])
-        self._log(f"{'Arrêté' if stopped else 'Terminé'} : {ok} ok, {skip} ignoré(s), {err} erreur(s) · {snap['text']}")
+        self._log(f"{'Stopped' if stopped else 'Finished'}: {ok} successful, {skip} skipped, {err} error(s) · {snap['text']}")
         for b in (self.btn_start, self.btn_sel):
             b.configure(state="normal")
         self.btn_stop.configure(state="disabled")
 
     def _on_close(self):
         if self.captioner.is_running():
-            if not messagebox.askyesno(APP_TITLE, "Un traitement est en cours. Quitter quand même ?"):
+            if not messagebox.askyesno(APP_TITLE, "A task is running. Quit anyway?"):
                 return
             self.captioner.stop()
         try:
@@ -865,12 +865,12 @@ class App(tk.Tk):
 # Entry point: choose the UI
 # --------------------------------------------------------------------------- #
 def main(argv: list[str] | None = None) -> None:
-    ap = argparse.ArgumentParser(description="Captionz — Ollama vision captioning")
+    ap = argparse.ArgumentParser(description="Captionz — image captioning with Ollama vision models")
     ap.add_argument("--ui", choices=["tk", "web"], default="tk",
                     help="tk = Tkinter desktop UI (default), web = NiceGUI web UI")
-    ap.add_argument("--port", type=int, default=8080, help="web UI port (default 8080)")
-    ap.add_argument("--host", default="127.0.0.1", help="web UI host (default 127.0.0.1; 0.0.0.0 to expose on the LAN)")
-    ap.add_argument("--no-browser", action="store_true", help="web UI: do not open the browser automatically")
+    ap.add_argument("--port", type=int, default=8080, help="web UI port (default: 8080)")
+    ap.add_argument("--host", default="127.0.0.1", help="web UI host (default: 127.0.0.1; use 0.0.0.0 to expose it on the LAN)")
+    ap.add_argument("--no-browser", action="store_true", help="web UI: do not open a browser automatically")
     a = ap.parse_args(argv)
     if a.ui == "web":
         try:
