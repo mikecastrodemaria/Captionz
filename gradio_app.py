@@ -181,7 +181,7 @@ def run_all(items, backend, url, model, hf_model, ctype, length, options, name, 
     except Exception as e:  # noqa: BLE001
         yield items, *render(items), None, f"Backend unavailable: {e}"
         return
-    log = [f"Démarrage : {len(items)} image(s), backend {s.backend}, modèle {s.model or s.hf_model or s.llamacpp_model or 'défaut'}"]
+    log = [f"Starting: {len(items)} image(s), backend {s.backend}, model {s.model or s.hf_model or s.llamacpp_model or 'default'}"]
     jobs = [Job(Path(it["path"])) for it in items]
     prog = BatchProgress()
     for ev in run_jobs(jobs, None, s, force=True, backend=be, progress=prog, log=log.append):
@@ -241,11 +241,11 @@ def build(default_backend: str = DEFAULT_BACKEND) -> gr.Blocks:
                                               label="Backend", scale=1)
                         url = gr.Textbox(value=s0.ollama_url, label="Ollama URL", scale=2,
                                          visible=default_backend == "ollama")
-                        model = gr.Dropdown([], value=None, label="Modèle Ollama", scale=3,
+                        model = gr.Dropdown([], value=None, label="Ollama model", scale=3,
                                             visible=default_backend == "ollama", allow_custom_value=True)
-                        hf_model = gr.Dropdown([], value=None, label="Modèle transformers", scale=3,
+                        hf_model = gr.Dropdown([], value=None, label="Transformers model", scale=3,
                                                visible=default_backend == "hf", allow_custom_value=True)
-                        lc_model = gr.Dropdown([], value=None, label="Modèle llama.cpp (local)", scale=3,
+                        lc_model = gr.Dropdown([], value=None, label="llama.cpp model (local)", scale=3,
                                                visible=default_backend == "llamacpp", allow_custom_value=True)
                         refresh = gr.Button("↻", scale=0, min_width=48)
                     status = gr.Markdown("…")

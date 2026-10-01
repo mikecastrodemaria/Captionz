@@ -25,7 +25,7 @@ Features:
   - Background processing with progress, log and clean stop
 
 Dependencies: Python 3.10+ (stdlib). Pillow optional (preview + downscaling).
-The UI language is French.
+The UI language is English.
 """
 
 from __future__ import annotations
@@ -453,7 +453,7 @@ class App(tk.Tk):
                 text = ""
         self.txt_caption.delete("1.0", "end")
         self.txt_caption.insert("1.0", text)
-        self.lbl_caption_file.configure(text=cap_file.name + (" (existe)" if cap_file.exists() else ""))
+        self.lbl_caption_file.configure(text=cap_file.name + (" (exists)" if cap_file.exists() else ""))
 
     def _show_preview(self, path: Path | None = None):
         if path is not None:
@@ -491,7 +491,7 @@ class App(tk.Tk):
         if job.status != "error":
             job.status = "ok"
         self._refresh_row(idx)
-        self.lbl_caption_file.configure(text=out.name + " (existe)")
+        self.lbl_caption_file.configure(text=out.name + " (exists)")
         self._log(f"💾 Saved {out.name}.")
 
     # ---- backend / models ------------------------------------------------ #
@@ -550,7 +550,7 @@ class App(tk.Tk):
             self._models_by_backend[b] = self.var_model.get()
             if b == "llamacpp":
                 have = self._lc_registry().list()
-                self.lbl_conn.configure(text=f"✔ {len(have)} modèle(s) local(aux)" if have
+                self.lbl_conn.configure(text=f"✔ {len(have)} local model(s)" if have
                                         else "Default model will be downloaded on first launch (about 2.9 GB)")
             else:
                 self.lbl_conn.configure(text=f"✔ {len(models)} vision model(s)")
@@ -808,7 +808,7 @@ class App(tk.Tk):
                         self.txt_caption.delete("1.0", "end")
                         self.txt_caption.insert("1.0", job.caption)
                         self.lbl_caption_file.configure(
-                            text=job.path.with_suffix(self.settings.extension).name + " (existe)")
+                            text=job.path.with_suffix(self.settings.extension).name + " (exists)")
                 elif ev[0] == "phase":
                     if ev[2] == "loading":
                         self._log(f"Loading model “{active_model(self.settings) or 'default'}”…")

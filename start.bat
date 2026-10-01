@@ -1,7 +1,7 @@
 @echo off
 cd /d "%~dp0"
 if not exist .venv\Scripts\pythonw.exe (
-    echo Environnement absent : lance d'abord install.bat
+    echo Environment not found. Run install.bat first.
     pause
     exit /b 1
 )

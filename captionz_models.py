@@ -65,7 +65,7 @@ def main(argv=None) -> int:
             mp, pp = reg.paths(m)
             size = (mp.stat().st_size + pp.stat().st_size) >> 20
             mark = "*" if m == st.llamacpp_model else " "
-            print(f"  {mark} {m}  [{info.get('source', '?')}] {size} Mo  {info.get('repo') or info.get('ollama_name') or ''}")
+            print(f"  {mark} {m}  [{info.get('source', '?')}] {size} MB  {info.get('repo') or info.get('ollama_name') or ''}")
         print("\nknown (download): " + ", ".join(KNOWN_MODELS))
         return 0
     if args.cmd == "download":

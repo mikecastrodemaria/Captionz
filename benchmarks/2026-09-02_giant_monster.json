@@ -18,7 +18,7 @@
       "words": 168,
       "warm_s": 7.0,
       "note": 5,
-      "remarque": "Le plus complet : Empire State, châteaux d'eau, avion, fumée, enfant qui court, patte du monstre. Aucune erreur."
+      "note": "Most complete: Empire State Building, water towers, plane, smoke, running child, and the monster's foot. No errors."
     },
     {
       "model": "tinyrick/gemma-4-31B-it-uncensored-heretic-vision-llmfan46:Q4_K_M",
@@ -35,7 +35,7 @@
       "words": 124,
       "warm_s": 14.9,
       "note": 5,
-      "remarque": "Tout y est, aucune hallucination, texte le plus concis. Le plus lent en génération."
+      "note": "Everything is present, no hallucinations, and the most concise text. Slowest generation."
     },
     {
       "model": "aratan/Qwable-agent-9B-Claude-Fable-5-heretic-GGUF:Q6_K",
@@ -52,7 +52,7 @@
       "words": 147,
       "warm_s": 6.2,
       "note": 4.5,
-      "remarque": "Complet (Empire State, avion, fumée, personnage, objet qui tombe). Bon rapport qualité/vitesse."
+      "note": "Complete (Empire State Building, plane, smoke, person, falling object). Good quality-to-speed ratio."
     },
     {
       "model": "qwen3.6:latest",
@@ -69,7 +69,7 @@
       "words": 143,
       "warm_s": 6.5,
       "note": 4.5,
-      "remarque": "Complet, vocabulaire précis (kaiju, hachures, stippling) ; même imprécision « toits » vs nuages."
+      "note": "Complete, precise vocabulary (kaiju, hatching, stippling); same inaccuracy of 'rooftops' instead of clouds."
     },
     {
       "model": "satgeze/qwenpaw-9b-heretic-1m:latest",
@@ -86,7 +86,7 @@
       "words": 167,
       "warm_s": 8.5,
       "note": 4.5,
-      "remarque": "Complet et juste ; dit « court sur les toits » alors que le personnage court sur les nuages."
+      "note": "Complete and accurate; says the person 'runs on rooftops' although they run on clouds."
     },
     {
       "model": "nutboy02/Agents-A1-4B-Kimi-heretic:latest",
@@ -103,7 +103,7 @@
       "words": 141,
       "warm_s": 4.3,
       "note": 4,
-      "remarque": "Très bon pour un 4B : Empire State, avion, châteaux d'eau, personnage. Oublie la fumée. Le plus rapide."
+      "note": "Very good for a 4B model: Empire State Building, plane, water towers, and person. Misses the smoke. Fastest."
     },
     {
       "model": "Fermi/Cydonia-24B-v4.3-heretic-vision:Q4_K_M",
@@ -120,7 +120,7 @@
       "words": 191,
       "warm_s": 3.1,
       "note": 3.5,
-      "remarque": "Style et ambiance bien rendus, personnage et châteaux d'eau OK, mais oublie l'avion et la fumée ; invente des escaliers de secours."
+      "note": "Style and mood are well captured; includes the person and water towers but misses the plane and smoke, and invents fire escapes."
     },
     {
       "model": "qwen3-vl:8b",
@@ -137,7 +137,7 @@
       "words": 170,
       "warm_s": 4.6,
       "note": 3.5,
-      "remarque": "Très riche, mais place la fumée « sur la tête du monstre » et un « bâtiment en flammes » : deux erreurs factuelles."
+      "note": "Very detailed, but places the smoke 'on the monster's head' and adds a 'burning building': two factual errors."
     },
     {
       "model": "iliafed/nemotron3-quant:latest",
@@ -154,7 +154,7 @@
       "words": 194,
       "warm_s": 2.1,
       "note": 3,
-      "remarque": "Fumée « sortant du flanc du monstre » et personnage « dans les rues » : faux. Très verbeux, mais génération ultra rapide."
+      "note": "Says the smoke is 'coming from the monster's side' and the person is 'in the streets': both are wrong. Very verbose, but extremely fast generation."
     }
   ]
 }

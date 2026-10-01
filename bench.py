@@ -32,7 +32,7 @@ NS = 1e9
 
 
 def short(model: str) -> str:
-    """Nom de fichier sûr et court pour un modèle : 'qwen3-vl:8b' -> 'qwen3-vl_8b'."""
+    """Return a short, filesystem-safe model filename."""
     s = model.split("/")[-1]
     return re.sub(r"[^A-Za-z0-9._-]+", "_", s)[:60]
 
@@ -79,9 +79,9 @@ def main() -> None:
         except Exception:
             pass
     ap = argparse.ArgumentParser()
-    ap.add_argument("source", help="image ou dossier")
-    ap.add_argument("--models", default="", help="liste explicite, séparée par des virgules")
-    ap.add_argument("--exclude", default="", help="sous-chaînes de noms à exclure")
+    ap.add_argument("source", help="image or folder")
+    ap.add_argument("--models", default="", help="comma-separated list of models")
+    ap.add_argument("--exclude", default="", help="comma-separated name fragments to exclude")
     ap.add_argument("--prompt", default=DEFAULT_PROMPT)
     ap.add_argument("--max-side", type=int, default=1024)
     ap.add_argument("--url", default="http://localhost:11434")
@@ -101,7 +101,7 @@ def main() -> None:
     models = [m for m in a.models.split(",") if m] or client.list_vision_models()
     excl = [e.lower() for e in a.exclude.split(",") if e]
     models = [m for m in models if not any(e in m.lower() for e in excl)]
-    print(f"{len(images)} image(s) × {len(models)} modèle(s) → {out}\n")
+    print(f"{len(images)} image(s) × {len(models)} model(s) → {out}\n")
 
     encoded = {img: OllamaClient.encode_image(img, a.max_side) for img in images}
     results: dict[str, dict[str, dict]] = {}   # model -> image name -> metrics
@@ -117,7 +117,7 @@ def main() -> None:
             else:
                 (out / f"{img.stem}__{short(model)}.txt").write_text(r["caption"] + "\n", "utf-8")
                 print(f"    {ii:>2}/{len(images)} {img.name}: {r['wall_s']}s "
-                      f"(load {r['load_s']}s, gen {r['gen_s']}s, {r['tok_per_s']} tok/s, {r['words']} mots)", flush=True)
+                      f"(load {r['load_s']}s, gen {r['gen_s']}s, {r['tok_per_s']} tok/s, {r['words']} words)", flush=True)
             (out / "results.json").write_text(json.dumps(
                 {"source": str(src), "prompt": a.prompt, "max_side": a.max_side, "results": results},
                 indent=2, ensure_ascii=False), "utf-8")
@@ -126,14 +126,14 @@ def main() -> None:
 
     # --- rapport ---
     L = [f"# Bench Captionz — {src.name}", "",
-         f"{len(images)} image(s), {len(models)} modèle(s), {time.strftime('%Y-%m-%d %H:%M')}, "
-         f"durée totale {round((time.time() - t_start) / 60, 1)} min.", "",
-         f"Prompt : `{a.prompt}`", "",
-         f"Images réduites à {a.max_side} px de côté max, température 0.2. Chaque modèle est chargé une fois "
-         f"(le chargement n'est compté que sur sa première image).", "",
-         "Un fichier `<image>__<modèle>.txt` par caption est dans ce dossier.", "",
-         "## Par modèle", "",
-         "| Modèle | Moy. par image | Médiane | Min | Max | tok/s moy. | Mots moy. | Chargement | Erreurs |",
+         f"{len(images)} image(s), {len(models)} model(s), {time.strftime('%Y-%m-%d %H:%M')}, "
+         f"total time {round((time.time() - t_start) / 60, 1)} min.", "",
+         f"Prompt: `{a.prompt}`", "",
+         f"Images are downscaled to a maximum side of {a.max_side} px; temperature is 0.2. Each model is loaded once "
+         f"(loading time is counted only for its first image).", "",
+         "One `<image>__<model>.txt` file per caption is saved in this folder.", "",
+         "## By model", "",
+         "| Model | Avg. per image | Median | Min | Max | Avg. tok/s | Avg. words | Load time | Errors |",
          "|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
     rows = []
     for model, per in results.items():
@@ -142,7 +142,7 @@ def main() -> None:
         if not ok:
             rows.append((9e9, f"| {model} | – | – | – | – | – | – | – | {errs} |"))
             continue
-        # temps par image hors chargement (le chargement est payé une fois)
+        # Per-image time excludes loading, which is counted only once.
         times = sorted(r["wall_s"] - r["load_s"] for r in ok)
         avg = sum(times) / len(times)
         med = times[len(times) // 2]
@@ -152,13 +152,13 @@ def main() -> None:
         rows.append((avg, f"| {model} | **{avg:.1f}s** | {med:.1f}s | {times[0]:.1f}s | {times[-1]:.1f}s "
                           f"| {tps:.0f} | {words:.0f} | {load:.1f}s | {errs} |"))
     L += [r for _, r in sorted(rows)]
-    L += ["", "## Par image", ""]
+    L += ["", "## By image", ""]
     for img in images:
         L += [f"### {img.name}", ""]
         for model in models:
             r = results[model].get(img.name, {})
             head = f"**{model}** ({r.get('wall_s', '?')}s)"
-            L += [head, "", r.get("caption") or f"*Erreur : {r.get('error')}*", ""]
+            L += [head, "", r.get("caption") or f"*Error: {r.get('error')}*", ""]
     (out / "README.md").write_text("\n".join(L), "utf-8")
     print(f"→ {out / 'README.md'}")
 

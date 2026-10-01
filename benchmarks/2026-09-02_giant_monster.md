@@ -1,10 +1,10 @@
 # Bench Captionz — Giant_monster_destroys_the_city.png
 
-Date : 2026-09-02. Image 1648×2944 réduite à 1024 px (JPEG 203 Ko). Prompt « Paragraphe (caption naturelle) », température 0.2, keep_alive=0.
+Date: 2026-09-02. Image resized from 1648×2944 to 1024 px (203 KB JPEG). Prompt: "Paragraph (natural caption)", temperature 0.2, keep_alive=0.
 
-**Total** = temps mur d'un appel à froid. **Chargement** = mise en VRAM (payé une fois par lot dans l'app grâce à keep_alive). **Par image** = Total − Chargement, c'est le coût réel en batch.
+**Total** = wall time for a cold call. **Load time** = loading into VRAM (paid once per batch in the app thanks to keep_alive). **Per image** = Total − Load time, the actual cost in a batch.
 
-| Modèle | Fidélité | Par image | Total | Chargement | Génération | tok/s | Mots |
+| Model | Accuracy | Per image | Total | Load time | Generation | tok/s | Words |
 |---|:---:|---:|---:|---:|---:|---:|---:|
 | acc100/muse-glimmer-heretic:latest | 5/5 | **7.0s** | 20.2s | 13.2s | 6.2s | 72.0 | 168 |
 | tinyrick/gemma-4-31B-it-uncensored-heretic-vision-llmfan46:Q4_K_M | 5/5 | **14.9s** | 24.2s | 9.3s | 14.1s | 58.6 | 124 |
@@ -16,19 +16,19 @@ Date : 2026-09-02. Image 1648×2944 réduite à 1024 px (JPEG 203 Ko). Prompt «
 | qwen3-vl:8b | 3.5/5 | **4.6s** | 9.6s | 5.0s | 4.1s | 194.9 | 170 |
 | iliafed/nemotron3-quant:latest | 3/5 | **2.1s** | 10.8s | 8.7s | 1.6s | 300.7 | 194 |
 
-## Remarques qualité
+## Quality notes
 
-- **muse-glimmer-heretic:latest** (5/5) : Le plus complet : Empire State, châteaux d'eau, avion, fumée, enfant qui court, patte du monstre. Aucune erreur.
-- **gemma-4-31B-it-uncensored-heretic-vision-llmfan46:Q4_K_M** (5/5) : Tout y est, aucune hallucination, texte le plus concis. Le plus lent en génération.
-- **Qwable-agent-9B-Claude-Fable-5-heretic-GGUF:Q6_K** (4.5/5) : Complet (Empire State, avion, fumée, personnage, objet qui tombe). Bon rapport qualité/vitesse.
-- **qwen3.6:latest** (4.5/5) : Complet, vocabulaire précis (kaiju, hachures, stippling) ; même imprécision « toits » vs nuages.
-- **qwenpaw-9b-heretic-1m:latest** (4.5/5) : Complet et juste ; dit « court sur les toits » alors que le personnage court sur les nuages.
-- **Agents-A1-4B-Kimi-heretic:latest** (4/5) : Très bon pour un 4B : Empire State, avion, châteaux d'eau, personnage. Oublie la fumée. Le plus rapide.
-- **Cydonia-24B-v4.3-heretic-vision:Q4_K_M** (3.5/5) : Style et ambiance bien rendus, personnage et châteaux d'eau OK, mais oublie l'avion et la fumée ; invente des escaliers de secours.
-- **qwen3-vl:8b** (3.5/5) : Très riche, mais place la fumée « sur la tête du monstre » et un « bâtiment en flammes » : deux erreurs factuelles.
-- **nemotron3-quant:latest** (3/5) : Fumée « sortant du flanc du monstre » et personnage « dans les rues » : faux. Très verbeux, mais génération ultra rapide.
+- **muse-glimmer-heretic:latest** (5/5): Most complete: Empire State Building, water towers, plane, smoke, running child, and the monster's foot. No errors.
+- **gemma-4-31B-it-uncensored-heretic-vision-llmfan46:Q4_K_M** (5/5): Everything is present, no hallucinations, and the most concise text. Slowest generation.
+- **Qwable-agent-9B-Claude-Fable-5-heretic-GGUF:Q6_K** (4.5/5): Complete (Empire State Building, plane, smoke, person, falling object). Good quality-to-speed ratio.
+- **qwen3.6:latest** (4.5/5): Complete, precise vocabulary (kaiju, hatching, stippling); same inaccuracy of "rooftops" instead of clouds.
+- **qwenpaw-9b-heretic-1m:latest** (4.5/5): Complete and accurate; says the person "runs on rooftops" although they run on clouds.
+- **Agents-A1-4B-Kimi-heretic:latest** (4/5): Very good for a 4B model: Empire State Building, plane, water towers, and person. Misses the smoke. Fastest.
+- **Cydonia-24B-v4.3-heretic-vision:Q4_K_M** (3.5/5): Style and mood are well captured; includes the person and water towers but misses the plane and smoke, and invents fire escapes.
+- **qwen3-vl:8b** (3.5/5): Very detailed, but places the smoke "on the monster's head" and adds a "burning building": two factual errors.
+- **nemotron3-quant:latest** (3/5): Says smoke is "coming from the monster's side" and the person is "in the streets": both are wrong. Very verbose, but extremely fast generation.
 
-## Captions générées
+## Generated captions
 
 ### acc100/muse-glimmer-heretic:latest
 

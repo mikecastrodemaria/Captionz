@@ -22,7 +22,7 @@ The Ollama layer reuses proven patterns from crispz-studio (`cz_ollama.py`): vis
 - **Dark mode**, background processing, progress bar, log, clean stop
 - Settings are remembered in `settings.json`
 
-Captions are written next to each image: `image.jpg` → `image.txt`. The UI language is French.
+Captions are saved next to each image: `image.jpg` → `image.txt`. The user interface is in English.
 
 ## Requirements
 
@@ -62,12 +62,12 @@ Web UI sources: a local path (file or folder) typed in the page, browser upload 
 
 ## Running without Ollama (llama.cpp backend)
 
-Pick **llama.cpp (sans Ollama)** as backend in any UI, or `--backend llamacpp` in the CLI. On first use Captionz downloads
+Select **llama.cpp (no Ollama)** as the backend in any UI, or use `--backend llamacpp` in the CLI. On first use Captionz downloads
 a prebuilt `llama-server` from the llama.cpp releases (CUDA 12.4/13.x or Vulkan on Windows, Vulkan/CPU on Linux, Metal on
 macOS; ~150–500 MB) and the default model **Qwen2.5-VL-3B-Instruct Q4_K_M** with its vision projector (~2.9 GB), then
 starts the server on a free local port. Everything lives in `llamacpp/` next to the app (`llamacpp_dir` in `settings.json`).
 
-Model management, from the "Modèles llama.cpp…" dialog in the UIs or from the command line:
+Manage models from the "llama.cpp models…" dialog in the UIs or from the command line:
 
 ```bash
 python captionz_models.py list                                   # local models + server build

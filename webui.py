@@ -500,7 +500,7 @@ def build() -> None:
                                              label="Backend", on_change=lambda e: (on_backend_change(), refresh_models())).classes("w-52")
                     W["url"] = ui.input("Ollama URL", value=s.ollama_url).classes("w-52")
                     m0 = active_model(s)
-                    W["model"] = ui.select([m0] if m0 else [], value=m0 or None, label="Modèle",
+                    W["model"] = ui.select([m0] if m0 else [], value=m0 or None, label="Model",
                                            on_change=lambda e: on_model_change()).classes("flex-grow")
                     ui.button(icon="refresh", on_click=refresh_models).props("flat round")
                     W["btn_models"] = ui.button("llama.cpp models…", icon="folder", on_click=open_model_manager).props("flat")

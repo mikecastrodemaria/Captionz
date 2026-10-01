@@ -12,8 +12,8 @@ license: mit
 
 # Captionz
 
-Batch image captioning with vision-language models. Upload images (or a folder), compose the prompt
-(caption type × length × options × character name), run, edit captions, download the zip.
+Batch image captioning with vision-language models. Upload images or a folder, compose the prompt
+(caption type × length × options × character name), generate and edit captions, and download them as a ZIP archive.
 
 Backend on Spaces: `transformers` (Qwen2.5-VL by default) with ZeroGPU. Set `CAPTIONZ_HF_MODEL` in the
 Space secrets/variables to change the default model.
